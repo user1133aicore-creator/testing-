@@ -1,0 +1,1824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChillRoot Pos System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    
+    <style>
+        /* Base styles */
+        body {
+            font-family: 'Inter', sans-serif;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        /* Theme styles */
+        .light {
+            --bg-color: #f7f7f7;
+            --text-color: #1f2937;
+            --card-bg: #ffffff;
+            --accent-color: #f59e0b; /* Amber 500 (Yellow) */
+        }
+        .dark {
+            --bg-color: #1f2937;
+            --text-color: #f3f4f6;
+            --card-bg: #374151;
+            --accent-color: #fcd34d; /* Amber 300 (Light Yellow) */
+        }
+        body.light { 
+            background-color: var(--bg-color); 
+            color: var(--text-color); 
+        }
+        body.dark { 
+            background-color: var(--bg-color); 
+            color: var(--text-color);
+        }
+        .bg-card { 
+            background-color: var(--card-bg);
+        }
+        .text-accent { 
+            color: var(--accent-color);
+        }
+        .bg-accent { 
+            background-color: var(--accent-color);
+        }
+        .border-accent { 
+            border-color: var(--accent-color);
+        }
+
+        /* FIX: Selection Color for Sugar Buttons */
+        .sugar-option[data-selected="true"] {
+            background-color: var(--accent-color) !important; 
+            color: white !important; 
+            border-color: var(--accent-color) !important;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); 
+        }
+
+        /* Custom scrollbar for menu/cart */
+        .custom-scroll::-webkit-scrollbar { 
+            width: 6px;
+        }
+        .custom-scroll::-webkit-scrollbar-track { 
+            background: var(--bg-color);
+        }
+        .custom-scroll::-webkit-scrollbar-thumb { 
+            background: #9ca3af; 
+            border-radius: 3px;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { 
+            background: #6b7280;
+        }
+
+        /* --- Item Image Auto-size (1:1 Aspect Ratio) --- */
+        .item-image-container {
+            position: relative;
+            width: 100%;
+            padding-top: 100%; /* Creates a square box (1:1 ratio) */
+            overflow: hidden;
+        }
+        .item-image-container img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        /* --- END Item Image CSS --- */
+
+
+        /* Print styles for receipt */
+        @media print {
+            body > *:not(#receipt-modal) { 
+                display: none !important;
+            }
+            #receipt-modal {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                display: flex !important;
+                justify-content: center;
+                align-items: flex-start;
+                background: white !important;
+                z-index: 9999;
+            }
+            .receipt-content {
+                width: 58mm;
+                max-width: 58mm;
+                margin: 0 auto;
+                padding: 10px;
+                font-family: monospace;
+                font-size: 9px;
+                color: black;
+            }
+            .receipt-content.w-80mm {
+                width: 80mm;
+                max-width: 80mm;
+            }
+            .no-print { 
+                display: none !important;
+            }
+        }
+    </style>
+</head>
+<body class="light">
+    <div id="app" class="min-h-screen">
+        </div>
+    <div id="modal-container">
+        </div>
+
+    <script>
+        // --- CONSTANTS AND INITIAL DATA ---
+
+        const APP_NAME = "ChillRoot Pos"; // Updated App Name
+        const STORAGE_KEY = {
+            USERS: 'pos_users',
+            MENU: 'pos_menu',
+            ORDERS: 'pos_orders',
+            SESSIONS: 'pos_sessions',
+            SETTINGS: 'pos_settings',
+            CURRENT_USER: 'pos_current_user' // Stored in sessionStorage
+        };
+        const INITIAL_USERS = [
+            { id: 'u1', username: 'admin', password: 'admin123', role: 'admin', name: 'Admin Manager' },
+            { id: 'u2', username: 'staff', password: 'staff123', role: 'staff', name: 'Staff Member' }
+        ];
+        // Menu includes image URLs for the full-image display
+        const INITIAL_MENU = [
+            { id: 'm1', category: 'Coffee', name: 'Espresso', price: 2.50, imageUrl: 'https://placehold.co/400x400/10b981/ffffff?text=ESPRESSO' },
+            { id: 'm2', category: 'Coffee', name: 'Latte', price: 4.00, imageUrl: 'https://placehold.co/400x400/10b981/ffffff?text=LATTE' },
+            { id: 'm3', category: 'Tea', name: 'Green Tea', price: 3.00, imageUrl: 'https://placehold.co/400x400/ef4444/ffffff?text=GREEN+TEA' },
+            { id: 'm4', category: 'Frappe', name: 'Caramel Frappe', price: 5.50, imageUrl: 'https://placehold.co/400x400/3b82f6/ffffff?text=CARAMEL+FRAPPE' },
+            { id: 'm5', category: 'Hot', name: 'Hot Chocolate', price: 3.50, imageUrl: 'https://placehold.co/400x400/f97316/ffffff?text=HOT+CHOCO' },
+            { id: 'm6', category: 'Soda', name: 'Coke', price: 1.50, imageUrl: 'https://placehold.co/400x400/9ca3af/ffffff?text=COKE' },
+            { id: 'm7', category: 'Snack', name: 'Croissant', price: 2.00, imageUrl: 'https://placehold.co/400x400/6366f1/ffffff?text=CROISSANT' },
+        ];
+        const CATEGORIES = ['Coffee', 'Tea', 'Hot', 'Frappe', 'Soda', 'Snack'];
+        const SUGAR_OPTIONS = ['0%', '25%', '50%', '75%', '100%'];
+        const NON_CUSTOMIZABLE_CATEGORIES = ['Soda', 'Snack'];
+        const TAX_RATE = 0; // 0% tax as per requirement
+
+        const FX_RATE_USD_KHR = 4000;
+        // 1 USD = 4000 KHR
+
+        // --- MESSAGE TRANSLATIONS (Complete) ---
+        const MESSAGES = {
+            en: {
+                login: 'Login', username: 'Username', password: 'Password', invalid_credentials: 'Invalid username or password.',
+                welcome: 'Welcome, ', pos_dashboard: 'POS Dashboard', admin_dashboard: 'Admin Dashboard', logout: 'Logout',
+                settings: 'Settings', menu: 'Menu', cart: 'Order Cart', subtotal: 'Subtotal', tax: 'Tax', total: 'Total',
+                cash: 'Cash', qrcode: 'QR Code Payment', checkout: 'Checkout', sugar: 'Sugar', note: 'Note', add_to_cart: 'Add to Cart',
+                items_sold: 'Items Sold', orders_count: 'Orders Count', total_usd: 'Total USD', users: 'Users', sessions: 'Sessions',
+                sales_summary: 'Sales Summary', reset_password: 'Reset Password', last_login: 'Last Login', last_logout: 'Last Logout',
+                orders_handled: 'Orders Handled', menu_management: 'Menu Management', add_item: 'Add New Item', edit_item: 'Edit Item',
+                delete: 'Delete', name: 'Name', price: 'Price', category: 'Category', image_url: 'Image URL', save: 'Save', cancel: 'Cancel',
+                confirm_delete: 'Are you sure you want to delete ', theme: 'Theme', language: 'Language', fx_rate: 'FX Rate (USD to KHR)',
+                light: 'Light', dark: 'Dark', english: 'English', khmer: 'Khmer', enter_amount: 'Enter Cash Amount Received', // MODIFIED
+                change: 'Change:', order_success: 'Order placed successfully! Printing receipt...', receipt: 'Receipt',
+                receipt_width: 'Receipt Width', r_58mm: '58mm', r_80mm: '80mm', item_details: 'Item Details', payment: 'Payment',
+                date: 'Date', qty: 'Qty', amount_received: 'Amount Received', change_due: 'Change Due', thank_you: 'THANK YOU!',
+                remove: 'Remove', no_items: 'No items in cart.', no_search_results: 'No items found.', all_categories: 'All Categories',
+                item_customization: 'Item Customization', 
+                
+                confirm_password_reset: 'Are you sure you want to set a new password for ',
+                new_password: 'New password is: ', 
+                reset_success: 'Password reset successfully!',
+                password_mismatch: 'New passwords do not match.',
+                current_password: 'Current Password',
+                new_password_input: 'New Password',
+                confirm_password_input: 'Confirm New Password',
+                change_password_title: 'Change My Password',
+                current_password_incorrect: 'Current password is incorrect.',
+                password_change_success: 'Password changed successfully!',
+                set_new_password: 'Set New Password',
+
+                amount_required: 'Please enter a valid cash amount.',
+                close: 'Close', actions: 'Actions', demo: 'Demo', sales_report: 'Sales Report', time_period: 'Time Period',
+                today: 'Today', this_month: 'This Month', this_year: 'This Year', item_sales_breakdown: 'Item Sales Breakdown',
+                reset_report: 'Reset Report', confirm_reset_today: 'Are you sure you want to delete ALL sales data for the selected date? This cannot be undone.',
+                reset_success_report: 'Sales report successfully reset for the selected date.', total_items: 'Total Items', total_revenue: 'Total Revenue',
+                cash_revenue: 'Cash Revenue', 
+                qr_revenue: 'QR Code Revenue',
+                all_time: 'All Time',
+                qr_code_image_url: 'QR Code Image URL',
+                receipt_logo_url: 'Receipt Logo URL', 
+                detailed_orders: 'Detailed Orders', 
+                active: 'Active', 
+                closed: 'Closed' 
+            },
+            km: {
+                login: 'ចូលប្រើ', username: 'ឈ្មោះអ្នកប្រើប្រាស់', password: 'លេខសម្ងាត់', invalid_credentials: 'ឈ្មោះអ្នកប្រើប្រាស់ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ។',
+                welcome: 'សូមស្វាគមន៍, ', pos_dashboard: 'ផ្ទាំងគ្រប់គ្រង POS', admin_dashboard: 'ផ្ទាំងគ្រប់គ្រងអ្នកគ្រប់គ្រង', logout: 'ចេញ',
+                settings: 'ការកំណត់', menu: 'បញ្ជីមុខម្ហូប', cart: 'រទេះទំនិញ', subtotal: 'តម្លៃសរុប', tax: 'ពន្ធ', total: 'សរុបទាំងអស់',
+                cash: 'សាច់ប្រាក់', qrcode: 'ទូទាត់តាម QR Code', checkout: 'ទូទាត់', sugar: 'ជាតិស្ករ', note: 'កំណត់ចំណាំ', add_to_cart: 'បន្ថែមទៅរទេះ',
+                items_sold: 'មុខទំនិញលក់បាន', orders_count: 'ចំនួនការបញ្ជាទិញ', total_usd: 'ប្រាក់សរុប (USD)', users: 'អ្នកប្រើប្រាស់', sessions: 'វគ្គប្រើប្រាស់',
+                sales_summary: 'សង្ខេបការលក់', reset_password: 'កំណត់លេខសម្ងាត់ឡើងវិញ', last_login: 'ចូលចុងក្រោយ', last_logout: 'ចេញចុងក្រោយ',
+                orders_handled: 'ការបញ្ជាទិញដែលបានដោះស្រាយ', menu_management: 'ការគ្រប់គ្រងមុខម្ហូប', add_item: 'បន្ថែមមុខម្ហូបថ្មី', edit_item: 'កែសម្រួលមុខម្ហូប',
+                delete: 'លុប', name: 'ឈ្មោះ', price: 'តម្លៃ', category: 'ប្រភេទ', image_url: 'URL រូបភាព', save: 'រក្សាទុក', cancel: 'បោះបង់',
+                confirm_delete: 'តើអ្នកប្រាកដជាចង់លុប ', theme: 'រូបរាង', language: 'ភាសា', fx_rate: 'អត្រាប្តូរប្រាក់ (USD ទៅ KHR)',
+                light: 'ពន្លឺ', dark: 'ងងឹត', english: 'អង់គ្លេស', khmer: 'ខ្មែរ', enter_amount: 'បញ្ចូលចំនួនសាច់ប្រាក់ដែលបានទទួល', // MODIFIED
+                change: 'ប្រាក់អាប់:', order_success: 'ការបញ្ជាទិញបានដាក់ដោយជោគជ័យ! កំពុងបោះពុម្ពវិក័យប័ត្រ...', receipt: 'វិក័យប័ត្រ',
+                receipt_width: 'ទទឹងវិក័យប័ត្រ', r_58mm: '58មម', r_80mm: '80មម', item_details: 'ព័ត៌មានលម្អិតមុខទំនិញ', payment: 'ការទូទាត់',
+                date: 'កាលបរិច្ឆេទ', qty: 'ចំនួន', amount_received: 'ចំនួនទឹកប្រាក់ដែលបានទទួល', change_due: 'ប្រាក់អាប់', thank_you: 'សូមអរគុណ!',
+                remove: 'លុបចេញ', no_items: 'មិនមានមុខទំនិញក្នុងរទេះទេ។', no_search_results: 'រកមិនឃើញមុខទំនិញទេ។', all_categories: 'ប្រភេទទាំងអស់',
+                item_customization: 'ការកែសម្រួលមុខម្ហូប', 
+                
+                confirm_password_reset: 'តើអ្នកប្រាកដជាចង់កំណត់លេខសម្ងាត់ថ្មីសម្រាប់ ',
+                new_password: 'លេខសម្ងាត់ថ្មីគឺ: ', 
+                reset_success: 'កំណត់លេខសម្ងាត់ឡើងវិញបានជោគជ័យ!',
+                password_mismatch: 'លេខសម្ងាត់ថ្មីមិនត្រូវគ្នាទេ។',
+                current_password: 'លេខសម្ងាត់បច្ចុប្បន្ន',
+                new_password_input: 'លេខសម្ងាត់ថ្មី',
+                confirm_password_input: 'បញ្ជាក់លេខសម្ងាត់ថ្មី',
+                change_password_title: 'ប្តូរលេខសម្ងាត់របស់ខ្ញុំ',
+                current_password_incorrect: 'លេខសម្ងាត់បច្ចុប្បន្នមិនត្រឹមត្រូវទេ។',
+                password_change_success: 'ប្តូរលេខសម្ងាត់បានជោគជ័យ!',
+                set_new_password: 'កំណត់លេខសម្ងាត់ថ្មី',
+
+                amount_required: 'សូមបញ្ចូលចំនួនសាច់ប្រាក់ត្រឹមត្រូវ។',
+                close: 'បិទ', actions: 'សកម្មភាព', demo: 'ការបង្ហាញ', sales_report: 'របាយការណ៍លក់', time_period: 'រយៈពេល',
+                today: 'ថ្ងៃនេះ', this_month: 'ខែនេះ', this_year: 'ឆ្នាំនេះ', item_sales_breakdown: 'ការវិភាគការលក់តាមមុខម្ហូប',
+                reset_report: 'កំណត់របាយការណ៍ឡើងវិញ', confirm_reset_today: 'តើអ្នកប្រាកដជាចង់លុបទិន្នន័យលក់ទាំងអស់សម្រាប់កាលបរិច្ឆេទដែលបានជ្រើសរើសមែនទេ? មិនអាចយកមកវិញបានទេ។',
+                reset_success_report: 'របាយការណ៍លក់ត្រូវបានកំណត់ឡើងវិញដោយជោគជ័យសម្រាប់កាលបរិច្ឆេទដែលបានជ្រើសរើស។', total_items: 'មុខទំនិញសរុប', total_revenue: 'ចំណូលសរុប',
+                cash_revenue: 'ចំណូលសាច់ប្រាក់', 
+                qr_revenue: 'ចំណូល QR Code',
+                all_time: 'គ្រប់ពេលទាំងអស់',
+                qr_code_image_url: 'URL រូបភាព QR Code',
+                receipt_logo_url: 'URL រូបភាពស្លាកសញ្ញាវិក័យប័ត្រ', 
+                detailed_orders: 'លំអិតការបញ្ជាទិញ', 
+                active: 'កំពុងប្រើ', 
+                closed: 'បិទ' 
+            }
+        };
+        // --- GLOBAL STATE ---
+        const state = {
+            // Data from localStorage
+            users: [],
+            menu: [],
+            orders: [],
+            sessions: [],
+            // Settings from localStorage
+            settings: {
+                theme: 'light', // 'light' or 'dark'
+                language: 'en', // 'en' or 'km'
+                fxRate: FX_RATE_USD_KHR,
+                receiptWidth: '58mm', // '58mm' or '80mm'
+                qrCodeImageUrl: 'https://placehold.co/200x200/4c4/fff?text=DEFAULT+QR', 
+                receiptLogoUrl: '', // Logo URL for receipts
+                primaryCurrency: 'USD', // <-- NEW: Primary transaction currency ('USD' or 'KHR')
+            },
+            // Runtime state
+            currentUser: null,
+            cart: [], // [{ id: 'unique_id', item: menu_item_object, quantity: 1, sugar: '100%', note: '' }]
+            currentView: 'pos', 
+            activeCategory: 'All Categories',
+            searchTerm: '',
+            isModalOpen: false,
+            // State for Reporting
+            salesFilterDate: new Date().toISOString().substring(0, 10), // 'YYYY-MM-DD' format, defaults to today
+        };
+        // --- UTILITY FUNCTIONS ---
+
+        const getLang = () => state.settings.language;
+        const T = (key) => MESSAGES[getLang()][key] || key;
+        const generateId = () => Math.random().toString(36).substring(2, 9);
+        
+        // Base Formatters (USD and KHR)
+        const formatUSD = (amount) => `$${(amount || 0).toFixed(2)}`;
+        const formatKHR = (amount) => `៛${Math.round(amount || 0).toLocaleString()}`;
+        
+        // Exchange functions
+        const usdToKhr = (usd) => usd * state.settings.fxRate;
+        const khrToUsd = (khr) => khr / state.settings.fxRate;
+
+        // Dynamic Currency Formatters
+        const formatPrimaryCurrency = (amountUSD) => {
+            const currency = state.settings.primaryCurrency;
+            if (currency === 'KHR') {
+                const amountKHR = usdToKhr(amountUSD);
+                return formatKHR(amountKHR);
+            }
+            // Default to USD
+            return formatUSD(amountUSD);
+        };
+
+        // This function calculates the equivalent secondary currency string.
+        const getSecondaryCurrencyDisplay = (amountUSD) => {
+            const currency = state.settings.primaryCurrency;
+            if (currency === 'KHR') {
+                return `(${formatUSD(amountUSD)})`;
+            }
+            // Secondary is KHR
+            return `(${formatKHR(usdToKhr(amountUSD))})`;
+        }
+        
+        const getTimestamp = () => new Date().toISOString();
+        
+        // Utility to format date for HTML input (YYYY-MM-DD)
+        const formatDateForInput = (date = new Date()) => {
+            return date.toISOString().substring(0, 10);
+        };
+        
+        // Utility to filter orders by a specific date string (YYYY-MM-DD)
+        const getOrdersByDate = (dateString) => {
+            if (!dateString) return state.orders; // Return all orders if dateString is null/empty (All Time)
+            return state.orders.filter(order => order.timestamp.startsWith(dateString));
+        };
+
+        // --- PERSISTENCE LOGIC ---
+        const loadInitialData = () => {
+            state.users = JSON.parse(localStorage.getItem(STORAGE_KEY.USERS)) || INITIAL_USERS;
+            state.menu = JSON.parse(localStorage.getItem(STORAGE_KEY.MENU)) || INITIAL_MENU;
+            state.orders = JSON.parse(localStorage.getItem(STORAGE_KEY.ORDERS)) || [];
+            state.sessions = JSON.parse(localStorage.getItem(STORAGE_KEY.SESSIONS)) || [];
+            state.settings = {
+                ...state.settings,
+                ...JSON.parse(localStorage.getItem(STORAGE_KEY.SETTINGS))
+            };
+            const storedUser = sessionStorage.getItem(STORAGE_KEY.CURRENT_USER);
+            if (storedUser) {
+                state.currentUser = state.users.find(u => u.id === storedUser) || null;
+            }
+        };
+
+        const saveUsers = () => localStorage.setItem(STORAGE_KEY.USERS, JSON.stringify(state.users));
+        const saveMenu = () => localStorage.setItem(STORAGE_KEY.MENU, JSON.stringify(state.menu));
+        const saveOrders = () => localStorage.setItem(STORAGE_KEY.ORDERS, JSON.stringify(state.orders));
+        const saveSessions = () => localStorage.setItem(STORAGE_KEY.SESSIONS, JSON.stringify(state.sessions));
+        const saveSettings = () => {
+            localStorage.setItem(STORAGE_KEY.SETTINGS, JSON.stringify(state.settings));
+            applyTheme();
+            renderApp();
+        };
+
+        const setCurrentUser = (user) => {
+            state.currentUser = user;
+            if (user) {
+                sessionStorage.setItem(STORAGE_KEY.CURRENT_USER, user.id);
+            } else {
+                sessionStorage.removeItem(STORAGE_KEY.CURRENT_USER);
+            }
+        };
+
+        // --- UI & THEME LOGIC ---
+
+        const applyTheme = () => {
+            document.body.className = state.settings.theme;
+        };
+
+        const showModal = (contentHtml, customClasses = 'max-w-md') => {
+            state.isModalOpen = true;
+            const modalContainer = document.getElementById('modal-container');
+            modalContainer.innerHTML = `
+                <div id="modal-container-overlay" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900 bg-opacity-75 backdrop-blur-sm" onclick="closeModal(event)">
+                    <div class="bg-card rounded-xl shadow-2xl p-6 ${customClasses} w-full" onclick="event.stopPropagation()">
+                        ${contentHtml}
+                    </div>
+                </div>
+            `;
+            const firstInteractive = modalContainer.querySelector('input, button');
+            if (firstInteractive) firstInteractive.focus();
+        };
+
+        window.closeModal = (event) => {
+            // Check if event exists and if it's the overlay being clicked
+            if (!event || event.target.id === 'modal-container-overlay') {
+                state.isModalOpen = false;
+                document.getElementById('modal-container').innerHTML = '';
+            }
+        };
+        // --- AUTHENTICATION & SESSION LOGIC ---
+
+        const login = (username, password) => {
+            const user = state.users.find(u => u.username === username && u.password === password);
+            if (user) {
+                setCurrentUser(user);
+                const existingSession = state.sessions.find(s => s.userId === user.id && !s.logoutTime);
+                if (existingSession) {
+                    existingSession.loginTime = getTimestamp();
+                } else {
+                    state.sessions.push({
+                        id: generateId(),
+                        userId: user.id,
+                        username: user.username,
+                        loginTime: getTimestamp(),
+                        logoutTime: null,
+                        ordersHandled: 0,
+                    });
+                }
+                saveSessions();
+                renderApp();
+                return true;
+            }
+            return false;
+        };
+        const logout = () => {
+            if (state.currentUser) {
+                const activeSession = state.sessions.find(s => s.userId === state.currentUser.id && !s.logoutTime);
+                if (activeSession) {
+                    activeSession.logoutTime = getTimestamp();
+                    saveSessions();
+                }
+            }
+            setCurrentUser(null);
+            state.cart = [];
+            state.currentView = 'pos'; // Reset view
+            renderApp();
+        };
+
+        // --- CART LOGIC ---
+
+        const updateCart = (newCart) => {
+            state.cart = newCart;
+            renderStaffDashboard();
+        }
+
+        window.addToCart = (itemId) => {
+            const item = state.menu.find(i => i.id === itemId);
+            if (!item) return;
+
+            const defaultSugar = NON_CUSTOMIZABLE_CATEGORIES.includes(item.category) ? 'N/A' : SUGAR_OPTIONS[SUGAR_OPTIONS.length - 1];
+            
+            const customization = {
+                sugar: defaultSugar,
+                note: ''
+            };
+            const html = `
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('item_customization')}</h2>
+                <div class="flex items-center space-x-4 mb-4">
+                    <img src="${item.imageUrl}" alt="${item.name}" class="w-12 h-12 rounded-lg object-cover">
+                    <div>
+                        <p class="font-semibold text-lg">${item.name}</p>
+                        <p class="text-gray-500">${formatUSD(item.price)}</p>
+                    </div>
+                </div>
+
+                <form id="customization-form">
+                    <input type="hidden" name="itemId" value="${itemId}">
+
+                    ${!NON_CUSTOMIZABLE_CATEGORIES.includes(item.category) ?
+        `
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-1">${T('sugar')}</label>
+                        <div class="flex flex-wrap gap-2">
+                            ${SUGAR_OPTIONS.map((opt, index) => `
+                                <button type="button" class="sugar-option px-3 py-1 text-sm rounded-lg border border-gray-300 dark:border-gray-600 transition"
+                                    data-sugar="${opt}" data-selected="${index === SUGAR_OPTIONS.length - 1 ? 'true' : 'false'}"
+                                    onclick="selectSugar(this)">
+                                    ${opt}
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                    ` : ''}
+
+                    <div class="mb-4">
+                        <label for="note" class="block text-sm font-medium mb-1">${T('note')}</label>
+                        <input type="text" id="note" name="note" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 focus:ring-accent focus:border-accent" placeholder="Special requests">
+                    </div>
+
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm rounded-lg text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-600 transition hover:bg-gray-300 dark:hover:bg-gray-500">${T('cancel')}</button>
+                        <button type="submit" class="px-4 py-2 text-sm rounded-lg text-white bg-accent transition hover:bg-amber-600">
+                            ${T('add_to_cart')}
+                        </button>
+                    </div>
+                </form>
+            `;
+            showModal(html);
+
+            document.getElementById('customization-form').onsubmit = (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const selectedSugar = form.querySelector('.sugar-option[data-selected="true"]')?.dataset.sugar || 'N/A';
+                const note = form.note.value.trim();
+
+                state.cart.push({
+                    id: generateId(),
+                    item: item,
+                    quantity: 1,
+                    sugar: selectedSugar,
+                    note: note
+                });
+                updateCart(state.cart);
+                closeModal();
+            };
+        };
+
+        window.selectSugar = (button) => {
+            button.closest('.flex').querySelectorAll('.sugar-option').forEach(btn => {
+                btn.dataset.selected = 'false';
+            });
+            button.dataset.selected = 'true';
+        };
+
+        window.updateQuantity = (cartItemId, delta) => {
+            const index = state.cart.findIndex(i => i.id === cartItemId);
+            if (index !== -1) {
+                const newQty = state.cart[index].quantity + delta;
+                if (newQty > 0) {
+                    state.cart[index].quantity = newQty;
+                } else {
+                    state.cart.splice(index, 1);
+                }
+                updateCart(state.cart);
+            }
+        };
+
+        window.removeItem = (cartItemId) => {
+            const index = state.cart.findIndex(i => i.id === cartItemId);
+            if (index !== -1) {
+                state.cart.splice(index, 1);
+                updateCart(state.cart);
+            }
+        };
+        // --- PAYMENT LOGIC ---
+
+        const calculateTotal = () => {
+            // Total is always calculated in USD (base currency)
+            const subtotal = state.cart.reduce((sum, item) => sum + (item.item.price * item.quantity), 0);
+            const tax = subtotal * TAX_RATE;
+            const total = subtotal + tax;
+            return { subtotal, tax, total };
+        };
+
+        window.promptCashPayment = () => {
+            const { total } = calculateTotal();
+            const primaryCurrency = state.settings.primaryCurrency;
+            
+            // Convert total to primary currency for display and input
+            const totalPrimary = (primaryCurrency === 'KHR') ? usdToKhr(total) : total;
+            const currencyStep = (primaryCurrency === 'KHR') ? '100' : '0.01';
+            const currencyUnit = (primaryCurrency === 'KHR') ? 'KHR' : 'USD';
+
+            const promptAmount = `
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('cash')} ${T('payment')}</h2>
+                <p class="mb-4 text-lg"><strong>${T('total')}:</strong> ${formatPrimaryCurrency(total)} ${getSecondaryCurrencyDisplay(total)}</p>
+                <form id="cash-payment-form">
+                    <label for="amount-received" class="block text-sm font-medium mb-1">${T('enter_amount')} (${currencyUnit}):</label>
+                    <input type="number" step="${currencyStep}" id="amount-received" name="amount" class="w-full p-3 mb-4 text-2xl border-2 border-accent rounded-lg bg-gray-100 dark:bg-gray-700 focus:ring-accent focus:border-accent" required placeholder="${totalPrimary.toFixed(primaryCurrency === 'KHR' ? 0 : 2)}" min="${totalPrimary.toFixed(primaryCurrency === 'KHR' ? 0 : 2)}">
+
+                    <p id="change-display" class="mb-4 text-lg font-semibold text-red-500 hidden"></p>
+
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" onclick="closeModal()" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-600">${T('cancel')}</button>
+                        <button type="submit" class="px-4 py-2 rounded-lg text-white bg-accent hover:bg-amber-600">${T('checkout')}</button>
+                    </div>
+                </form>
+            `;
+            showModal(promptAmount);
+
+            const form = document.getElementById('cash-payment-form');
+            const amountInput = document.getElementById('amount-received');
+            const changeDisplay = document.getElementById('change-display');
+            const submitButton = form.querySelector('button[type="submit"]');
+
+            // Initial amount set
+            amountInput.value = totalPrimary.toFixed(primaryCurrency === 'KHR' ? 0 : 2);
+
+            const calculateChange = () => {
+                const receivedPrimary = parseFloat(amountInput.value) || 0;
+                const changePrimary = receivedPrimary - totalPrimary;
+                // Convert the change back to USD for formatting/storage consistency
+                const changeUSD = (primaryCurrency === 'KHR') ? khrToUsd(changePrimary) : changePrimary;
+                
+                if (receivedPrimary >= totalPrimary) {
+                    const secondaryDisplay = getSecondaryCurrencyDisplay(changeUSD);
+                    changeDisplay.textContent = `${T('change')} ${formatPrimaryCurrency(changeUSD)} ${secondaryDisplay}`;
+                    changeDisplay.classList.remove('text-red-500', 'hidden');
+                    changeDisplay.classList.add('text-green-500');
+                    submitButton.disabled = false;
+                } else {
+                    const requiredPrimary = totalPrimary - receivedPrimary;
+                    const requiredUSD = (primaryCurrency === 'KHR') ? khrToUsd(requiredPrimary) : requiredPrimary;
+                    
+                    changeDisplay.textContent = `Need ${formatPrimaryCurrency(requiredUSD)} more.`;
+                    changeDisplay.classList.remove('text-green-500', 'hidden');
+                    changeDisplay.classList.add('text-red-500');
+                    submitButton.disabled = true;
+                }
+            };
+            amountInput.addEventListener('input', calculateChange);
+            amountInput.focus();
+            calculateChange(); // Initial calculation
+
+            form.onsubmit = (e) => {
+                e.preventDefault();
+                const amountReceivedPrimary = parseFloat(amountInput.value);
+                if (amountReceivedPrimary < totalPrimary) {
+                    alert(T('amount_required'));
+                    return;
+                }
+                
+                // Convert received amount to USD for consistent storage
+                const amountReceivedUSD = (primaryCurrency === 'KHR') ? khrToUsd(amountReceivedPrimary) : amountReceivedPrimary;
+
+                processPayment('Cash', amountReceivedUSD);
+            };
+        };
+
+        window.promptQRcodePayment = () => {
+            const { total } = calculateTotal();
+            const qrModal = `
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('qrcode')} ${T('payment')}</h2>
+                <div class="text-center p-4">
+                    <p class="mb-4 text-lg"><strong>${T('total')}:</strong> ${formatPrimaryCurrency(total)} ${getSecondaryCurrencyDisplay(total)}</p>
+                    <img src="${state.settings.qrCodeImageUrl || 'https://placehold.co/200x200/000/fff?text=DEFAULT+QR'}" 
+                        alt="QR Code Payment" class="mx-auto my-4 rounded-lg border-2 border-gray-300 dark:border-gray-500">
+                    <p class="text-sm text-gray-500">(${T('qrcode')} ${T('payment')} ${T('demo')})</p>
+                </div>
+                <div class="flex justify-end space-x-3 mt-4">
+                    <button type="button" onclick="closeModal()" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-600">${T('cancel')}</button>
+                    <button type="button" onclick="processPayment('QR Code', ${total})" class="px-4 py-2 rounded-lg text-white bg-amber-700 hover:bg-amber-800">${T('checkout')}</button>
+                </div>
+            `;
+            showModal(qrModal);
+        };
+
+        const processPayment = (type, amountReceivedUSD) => {
+            const { subtotal, tax, total } = calculateTotal();
+            // All amounts are in USD for internal storage
+            const changeUSD = amountReceivedUSD - total;
+
+            const newOrder = {
+                id: generateId(),
+                timestamp: getTimestamp(),
+                staffId: state.currentUser.id,
+                items: state.cart.map(item => ({
+                    name: item.item.name,
+                    price: item.item.price, // USD
+                    qty: item.quantity,
+                    sugar: item.sugar,
+                    note: item.note,
+                })),
+                subtotal: subtotal, // USD
+                tax: tax, // USD
+                total: total, // USD
+                paymentType: type,
+                amountReceived: amountReceivedUSD, // USD equivalent of what customer paid
+                change: changeUSD, // USD equivalent of change given
+                transactionCurrency: state.settings.primaryCurrency, // <-- NEW: Store the currency used for the payment
+            };
+            // 1. Save order
+            state.orders.push(newOrder);
+            saveOrders();
+            // 2. Update session counter
+            const activeSession = state.sessions.find(s => s.userId === state.currentUser.id && !s.logoutTime);
+            if (activeSession) {
+                activeSession.ordersHandled = (activeSession.ordersHandled || 0) + 1;
+                saveSessions();
+            }
+
+            // 3. Print receipt
+            closeModal();
+            renderReceipt(newOrder);
+
+            // 4. Clear cart
+            updateCart([]);
+        };
+        // --- RECEIPT PRINTING ---
+
+        const renderReceipt = (order) => {
+            const { total, subtotal, tax, paymentType, amountReceived, change, transactionCurrency } = order;
+            const receiptDate = new Date(order.timestamp).toLocaleString(getLang() === 'km' ? 'km-KH' : 'en-US');
+
+            // Set formatters based on the currency used for this specific transaction
+            const totalPrimary = (transactionCurrency === 'KHR') ? usdToKhr(total) : total;
+            const totalSecondary = (transactionCurrency === 'KHR') ? total : usdToKhr(total);
+            const primaryFormatter = (transactionCurrency === 'KHR') ? formatKHR : formatUSD;
+            const secondaryFormatter = (transactionCurrency === 'KHR') ? formatUSD : formatKHR;
+            
+            // Cash details for receipt
+            let cashDetailsHtml = '';
+            if (paymentType === 'Cash') {
+                const receivedPrimary = (transactionCurrency === 'KHR') ? usdToKhr(amountReceived) : amountReceived;
+                const changePrimary = (transactionCurrency === 'KHR') ? usdToKhr(change) : change;
+                
+                cashDetailsHtml = `
+                    <div class="flex justify-between"><span>${T('amount_received')}:</span><span>${primaryFormatter(receivedPrimary)}</span></div>
+                    <div class="flex justify-between"><span>${T('change_due')}:</span><span>${primaryFormatter(changePrimary)}</span></div>
+                `;
+            }
+
+
+            const itemRows = order.items.map(item => {
+                const customization = [];
+                if (item.sugar !== 'N/A') customization.push(`${T('sugar')}: ${item.sugar}`);
+                if (item.note) customization.push(`${T('note')}: ${item.note}`);
+
+                const detailLine = customization.length > 0 ? `<div class="text-[8px] italic ml-2">(${customization.join(', ')})</div>` : '';
+                
+                // Item prices are always stored in USD. Display primary currency on receipt
+                const itemPricePrimary = (transactionCurrency === 'KHR') ? usdToKhr(item.price) : item.price;
+                const itemTotalPrimary = (transactionCurrency === 'KHR') ? usdToKhr(item.price * item.qty) : (item.price * item.qty);
+
+
+                return `
+                    <div class="flex justify-between">
+                        <span class="w-1/2">${item.qty} x ${item.name}</span>
+                        <span class="w-1/4 text-right">${primaryFormatter(itemPricePrimary)}</span>
+                        <span class="w-1/4 text-right">${primaryFormatter(itemTotalPrimary)}</span>
+                    </div>
+                    ${detailLine}
+                `;
+            }).join('');
+            const receiptHtml = `
+                <div id="receipt-modal" class="fixed inset-0 z-50 hidden justify-center items-center">
+                    <div class="receipt-content bg-white shadow-xl p-4 text-black text-center ${state.settings.receiptWidth === '80mm' ? 'w-80mm' : ''}">
+                        ${state.settings.receiptLogoUrl 
+                            ? `<img src="${state.settings.receiptLogoUrl}" alt="Logo" class="w-12 h-12 mx-auto mb-2 object-contain">` 
+                            : `<h3 class="text-lg font-bold mb-1">${APP_NAME}</h3>` // Fallback to text if no logo URL
+                        }
+                        <p class="text-[8px] mb-2">123 Example St, Phnom Penh, Cambodia</p>
+                        <hr class="border-t border-dashed border-black my-2">
+                        <div class="flex justify-between text-[9px]">
+                            <span>${T('date')}: ${receiptDate}</span>
+                            <span>Order ID: ${order.id}</span>
+                        </div>
+                        <hr class="border-t border-dashed border-black my-1">
+                        <div class="flex justify-between text-[9px] font-bold mt-2">
+                            <span class="w-1/2">${T('item_details')}</span>
+                            <span class="w-1/4 text-right">${T('price')}</span>
+                            <span class="w-1/4 text-right">${T('amount')}</span>
+                        </div>
+                        <hr class="border-t border-dashed border-black my-1">
+                        <div class="text-[9px] space-y-1 my-1">
+                            ${itemRows}
+                        </div>
+                        <hr class="border-t border-dashed border-black my-2">
+                        <div class="text-[10px] space-y-1">
+                            <div class="flex justify-between"><span>${T('subtotal')}</span><span>${primaryFormatter(totalPrimary)}</span></div>
+                            <div class="flex justify-between"><span>${T('tax')} (0%)</span><span>${primaryFormatter(0)}</span></div>
+                            <div class="flex justify-between font-bold text-lg"><span>${T('total')} ${transactionCurrency}</span><span>${primaryFormatter(totalPrimary)}</span></div>
+                            <div class="flex justify-between font-bold text-lg"><span>Total ${transactionCurrency === 'USD' ? 'KHR' : 'USD'}</span><span>${secondaryFormatter(totalSecondary)}</span></div>
+                        </div>
+                        <hr class="border-t border-dashed border-black my-2">
+                        <div class="text-[9px] space-y-1">
+                            <div class="flex justify-between"><span>${T('payment')}:</span><span>${paymentType}</span></div>
+                            ${cashDetailsHtml}
+                        </div>
+                        <hr class="border-t border-dashed border-black my-2">
+                        <p class="text-sm font-bold mt-2">${T('thank_you')}</p>
+                        <div class="text-xs mt-4 no-print">
+                            <button onclick="window.print()" class="bg-accent text-white px-3 py-1 rounded-md">Print Receipt</button>
+                            <button onclick="document.getElementById('receipt-modal').style.display='none'" class="bg-gray-500 text-white px-3 py-1 rounded-md ml-2">${T('close')}</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('modal-container').innerHTML = receiptHtml;
+            document.getElementById('receipt-modal').style.display = 'flex';
+            window.print();
+            // Auto close after print (wait for print dialog to appear/close)
+            setTimeout(() => {
+                const modal = document.getElementById('receipt-modal');
+                if(modal) modal.style.display = 'none';
+                document.getElementById('modal-container').innerHTML = '';
+            }, 500); // 0.5 seconds delay
+        };
+
+
+        // --- LOGIN VIEW ---
+
+        const renderLogin = () => {
+            const appDiv = document.getElementById('app');
+            appDiv.innerHTML = `
+                <div class="flex items-center justify-center min-h-screen">
+                    <div class="bg-card p-8 rounded-xl shadow-2xl w-full max-w-sm">
+                        <h2 class="text-3xl font-extrabold text-center mb-6 text-accent">${APP_NAME}</h2>
+                        <form id="login-form" class="space-y-4">
+                            <div>
+                                <label for="username" class="block text-sm font-medium mb-1">${T('username')}</label>
+                                <input type="text" id="username" name="username" class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 focus:ring-accent focus:border-accent" required value="admin">
+                            </div>
+                            <div>
+                                <label for="password" class="block text-sm font-medium mb-1">${T('password')}</label>
+                                <input type="password" id="password" name="password" class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 focus:ring-accent focus:border-accent" required value="admin123">
+                            </div>
+                            <button type="submit" class="w-full py-3 mt-4 rounded-lg font-bold text-white bg-accent hover:bg-amber-600 transition shadow-lg">
+                                ${T('login')}
+                            </button>
+                            <p id="login-error" class="text-red-500 text-sm text-center mt-3 hidden">${T('invalid_credentials')}</p>
+                        </form>
+                        <div class="mt-6 border-t pt-4 text-center text-sm text-gray-500">
+                            <p class="font-semibold mb-1">Demo Credentials:</p>
+                            <p>Admin: admin / admin123</p>
+                            <p>Staff: staff / staff123</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('login-form').onsubmit = (e) => {
+                e.preventDefault();
+                const username = e.target.username.value;
+                const password = e.target.password.value;
+                const errorDisplay = document.getElementById('login-error');
+
+                if (login(username, password)) {
+                    errorDisplay.classList.add('hidden');
+                } else {
+                    errorDisplay.classList.remove('hidden');
+                }
+            };
+        };
+
+        // --- NAVIGATION BAR ---
+
+        const renderNav = () => {
+            const user = state.currentUser;
+            if (!user) return '';
+
+            const navItems = [
+                { view: 'pos', label: T('pos_dashboard'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-9-4h18"/></svg>` },
+                { view: 'sales_report', label: T('sales_report'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2v5h-5m0 0v-4a2 2 0 012-2h2a2 2 0 012 2v4m-5 4v-2a2 2 0 012-2h2a2 2 0 012 2v2m-6 0h6"/></svg>` },
+            ];
+
+            if (user.role === 'admin') {
+                navItems.push(
+                    { view: 'admin', label: T('admin_dashboard'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>` },
+                    { view: 'menu_manager', label: T('menu'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>` }
+                );
+            }
+
+            const navTabs = navItems.map(item => `
+                <button onclick="setStateView('${item.view}')" class="flex items-center px-3 py-2 text-sm rounded-lg font-semibold transition ${state.currentView === item.view ? 'bg-accent text-white shadow-md' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'}">
+                    ${item.icon} ${item.label}
+                </button>
+            `).join('');
+
+            return `
+                <nav class="p-4 bg-card shadow-md flex justify-between items-center sticky top-0 z-10">
+                    <div class="flex items-center space-x-4">
+                        <h1 class="text-2xl font-extrabold text-accent">${APP_NAME}</h1>
+                        <span class="text-sm font-medium text-gray-500 dark:text-gray-400 hidden sm:block">${T('welcome')} ${user.name} (${user.role.toUpperCase()})</span>
+                    </div>
+                    <div class="flex space-x-2">
+                        ${navTabs}
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <button onclick="renderSettingsModal()" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.82 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.82 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.82-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.82-3.31 2.37-2.37h.001z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        </button>
+                        <button onclick="logout()" class="flex items-center px-4 py-2 text-sm rounded-lg font-bold text-white bg-red-500 hover:bg-red-600 transition">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+                            ${T('logout')}
+                        </button>
+                    </div>
+                </nav>
+            `;
+        };
+
+        // --- STAFF POS DASHBOARD VIEW ---
+
+        const renderMenuSection = () => {
+            // 1. Filter by search term
+            const filteredBySearch = state.menu.filter(item => 
+                item.name.toLowerCase().includes(state.searchTerm.toLowerCase())
+            );
+
+            // 2. Filter by category
+            const finalMenu = state.activeCategory === 'All Categories' ? filteredBySearch : filteredBySearch.filter(item => item.category === state.activeCategory);
+
+            const categoryButtons = ['All Categories', ...CATEGORIES].map(cat => `
+                <button onclick="changeCategory('${cat}')" class="px-4 py-2 text-sm rounded-lg font-semibold transition whitespace-nowrap ${state.activeCategory === cat ? 'bg-accent text-white shadow-md' : 'bg-card hover:bg-gray-200 dark:hover:bg-gray-700'}">
+                    ${cat === 'All Categories' ? T('all_categories') : cat}
+                </button>
+            `).join('');
+
+            const menuItems = finalMenu.map(item => `
+                <div onclick="addToCart('${item.id}')" class="bg-card rounded-xl shadow-md overflow-hidden cursor-pointer hover:shadow-lg transform hover:scale-[1.02] transition duration-200">
+                    <div class="item-image-container">
+                        <img src="${item.imageUrl || `https://placehold.co/400x400/ccc/000?text=${item.name.toUpperCase().split(' ').join('+')}`}" alt="${item.name}" class="w-full h-full object-cover">
+                    </div>
+                    <div class="p-3">
+                        <p class="font-bold text-lg truncate">${item.name}</p>
+                        <p class="text-xl font-extrabold text-accent">${formatPrimaryCurrency(item.price)}</p>
+                    </div>
+                </div>
+            `).join('');
+
+            return `
+                <div class="mb-4">
+                    <input type="text" oninput="updateSearch(this.value)" value="${state.searchTerm}" placeholder="Search for items..." class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-card focus:ring-accent focus:border-accent">
+                </div>
+                <div class="mb-4 flex space-x-3 overflow-x-auto pb-2 custom-scroll">
+                    ${categoryButtons}
+                </div>
+                <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                    ${menuItems.length > 0 ? menuItems : `<p class="p-4 text-gray-500">${T('no_search_results')}</p>`}
+                </div>
+            `;
+        };
+
+        window.updateSearch = (term) => {
+            state.searchTerm = term.trim();
+            renderStaffDashboard();
+        };
+
+        window.changeCategory = (category) => {
+            state.activeCategory = category;
+            renderStaffDashboard();
+        };
+
+        const renderCartSection = () => {
+            const { subtotal, tax, total } = calculateTotal();
+
+            const cartItems = state.cart.map(item => `
+                <div class="flex items-center p-3 bg-gray-100 dark:bg-gray-700 rounded-lg">
+                    <div class="flex-grow">
+                        <p class="font-bold">${item.item.name} <span class="text-sm text-accent">${getSecondaryCurrencyDisplay(item.item.price)}</span></p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">
+                            ${item.sugar !== 'N/A' ? `${T('sugar')}: ${item.sugar}` : 'No sugar'} 
+                            ${item.note ? `| ${T('note')}: ${item.note}` : ''}
+                        </p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <div class="flex items-center border border-gray-300 dark:border-gray-600 rounded-lg">
+                            <button onclick="updateQuantity('${item.id}', -1)" class="p-1 w-8 h-8 rounded-l-lg bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500">-</button>
+                            <span class="px-2 font-semibold">${item.quantity}</span>
+                            <button onclick="updateQuantity('${item.id}', 1)" class="p-1 w-8 h-8 rounded-r-lg bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500">+</button>
+                        </div>
+                        <p class="font-extrabold text-lg w-16 text-right">${formatPrimaryCurrency(item.item.price * item.quantity)}</p>
+                        <button onclick="removeItem('${item.id}')" class="text-red-500 hover:text-red-700 p-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+
+            return `
+                <h2 class="text-2xl font-bold mb-4 border-b pb-2 text-accent">${T('cart')}</h2>
+                <div class="space-y-3 custom-scroll" style="height: calc(100vh - 350px); overflow-y: auto;">
+                    ${cartItems.length > 0 ? cartItems : `<p class="text-gray-500 text-center p-4">${T('no_items')}</p>`}
+                </div>
+                <div class="mt-4 p-4 bg-card rounded-xl shadow-inner space-y-2">
+                    <div class="flex justify-between">
+                        <span class="text-sm">${T('subtotal')}</span>
+                        <span class="font-medium">${formatPrimaryCurrency(subtotal)}</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-sm">${T('tax')} (0%)</span>
+                        <span class="font-medium">${formatPrimaryCurrency(tax)}</span>
+                    </div>
+                    <div class="flex justify-between border-t pt-2 border-gray-200 dark:border-gray-600">
+                        <span class="text-xl font-bold">${T('total')}</span>
+                        <span class="text-2xl font-extrabold text-accent">${formatPrimaryCurrency(total)}</span>
+                    </div>
+                    <div class="text-right text-sm text-gray-500">
+                        ${getSecondaryCurrencyDisplay(total)}
+                    </div>
+                </div>
+                <div class="mt-4 space-y-2">
+                    <button onclick="promptCashPayment()" ${state.cart.length === 0 ? 'disabled' : ''} class="w-full p-3 rounded-lg font-bold text-white ${state.cart.length === 0 ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600 transition'}">
+                        ${T('cash')} - ${T('checkout')}
+                    </button>
+                    <button onclick="promptQRcodePayment()" ${state.cart.length === 0 ? 'disabled' : ''} class="w-full p-3 rounded-lg font-bold text-white ${state.cart.length === 0 ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600 transition'}">
+                        ${T('qrcode')} - ${T('checkout')}
+                    </button>
+                </div>
+            `;
+        };
+
+        const renderStaffDashboard = () => {
+            document.getElementById('content').innerHTML = `
+                <div class="flex h-full">
+                    <div class="w-2/3 p-4 overflow-y-auto custom-scroll">
+                        ${renderMenuSection()}
+                    </div>
+                    <div class="w-1/3 p-4 bg-gray-50 dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 sticky top-0" style="height: calc(100vh - 64px);">
+                        ${renderCartSection()}
+                    </div>
+                </div>
+            `;
+        };
+
+        // --- ADMIN DASHBOARD VIEW ---
+
+        const calculateSalesSummary = (orders) => {
+            const summary = {
+                totalRevenue: 0,
+                cashRevenue: 0,
+                qrRevenue: 0,
+                totalItemsSold: 0,
+                ordersCount: orders.length,
+                itemSalesMap: {},
+            };
+
+            orders.forEach(order => {
+                // All revenues are calculated and stored in USD (base currency)
+                summary.totalRevenue += order.total;
+                if (order.paymentType === 'Cash') {
+                    summary.cashRevenue += order.total;
+                } else if (order.paymentType === 'QR Code') {
+                    summary.qrRevenue += order.total;
+                }
+
+                order.items.forEach(item => {
+                    summary.totalItemsSold += item.qty;
+                    if (!summary.itemSalesMap[item.name]) {
+                        summary.itemSalesMap[item.name] = { qty: 0, revenue: 0 };
+                    }
+                    summary.itemSalesMap[item.name].qty += item.qty;
+                    summary.itemSalesMap[item.name].revenue += (item.qty * item.price);
+                });
+            });
+
+            // Convert map to array for display
+            summary.itemSalesArray = Object.entries(summary.itemSalesMap)
+                .map(([name, data]) => ({ name, qty: data.qty, revenue: data.revenue }))
+                .sort((a, b) => b.revenue - a.revenue);
+
+            return summary;
+        };
+        const renderSalesSummary = (summary) => {
+            return `
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div class="bg-card p-4 rounded-xl shadow-lg border-l-4 border-accent">
+                        <p class="text-sm font-medium text-gray-500">${T('total_revenue')} USD</p>
+                        <p class="text-3xl font-extrabold">${formatUSD(summary.totalRevenue)}</p>
+                        <p class="text-xs text-gray-400">${getSecondaryCurrencyDisplay(summary.totalRevenue)}</p>
+                    </div>
+                    <div class="bg-card p-4 rounded-xl shadow-lg border-l-4 border-green-500">
+                        <p class="text-sm font-medium text-gray-500">${T('cash_revenue')} USD</p>
+                        <p class="text-3xl font-extrabold">${formatUSD(summary.cashRevenue)}</p>
+                    </div>
+                    <div class="bg-card p-4 rounded-xl shadow-lg border-l-4 border-blue-500">
+                        <p class="text-sm font-medium text-gray-500">${T('qr_revenue')} USD</p>
+                        <p class="text-3xl font-extrabold">${formatUSD(summary.qrRevenue)}</p>
+                    </div>
+                    <div class="bg-card p-4 rounded-xl shadow-lg border-l-4 border-indigo-500">
+                        <p class="text-sm font-medium text-gray-500">${T('total_items')}</p>
+                        <p class="text-3xl font-extrabold">${summary.totalItemsSold}</p>
+                        <p class="text-xs text-gray-400">(${summary.ordersCount} ${T('orders_count')})</p>
+                    </div>
+                </div>
+            `;
+        };
+
+        const renderAdminDashboard = () => {
+            // Summary for all time
+            const allTimeSummary = calculateSalesSummary(state.orders);
+
+            document.getElementById('content').innerHTML = `
+                <div class="p-6 space-y-6 max-w-6xl mx-auto">
+                    <h2 class="text-3xl font-bold text-accent">${T('admin_dashboard')}</h2>
+                    
+                    <h3 class="text-xl font-bold border-b pb-2">${T('sales_summary')} (${T('all_time')})</h3>
+                    ${renderSalesSummary(allTimeSummary)}
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        ${renderUsersManagement()}
+                        
+                        ${renderSessionsActivity()}
+
+                        <div class="bg-card p-4 rounded-xl shadow-lg h-96">
+                            <h3 class="text-xl font-bold mb-4 border-b pb-2">${T('actions')}</h3>
+                            <div class="space-y-4">
+                                <button onclick="setStateView('menu_manager')" class="w-full p-3 flex items-center justify-center bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition font-semibold">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a1 1 0 00-1 1v1a1 1 0 002 0V3a1 1 0 00-1-1zm4.848 1.572l-.707.707a1 1 0 001.414 1.414l.707-.707a1 1 0 00-1.414-1.414zM2 10a1 1 0 011-1h1a1 1 0 110 2H3a1 1 0 01-1-1zm15 0a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM7.152 4.223a1 1 0 00-.707 1.414l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-.707-.707zm5.696 11.554a1 1 0 00.707 1.414l-.707.707a1 1 0 00-1.414-1.414l.707-.707a1 1 0 00.707-.707zM10 15a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zm-4.848-1.572l-.707.707a1 1 0 001.414 1.414l.707-.707a1 1 0 00-1.414-1.414zM4 10a8 8 0 1116 0 8 8 0 01-16 0z"/></svg>
+                                    ${T('menu_management')}
+                                </button>
+                                <button onclick="setStateView('sales_report')" class="w-full p-3 flex items-center justify-center bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition font-semibold">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.414-1.414L11 9.586V6z" clip-rule="evenodd"/></svg>
+                                    ${T('sales_report')}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        const renderUsersManagement = () => {
+            const userList = state.users.map(user => `
+                <li class="p-3 flex justify-between items-center hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition">
+                    <div>
+                        <p class="font-semibold">${user.name} (${user.username})</p>
+                        <p class="text-sm text-gray-500">${user.role.toUpperCase()}</p>
+                    </div>
+                    <button onclick="promptResetPassword('${user.id}')" class="px-3 py-1 text-sm bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition">
+                        ${T('reset_password')}
+                    </button>
+                </li>
+            `).join('');
+
+            return `
+                <div class="bg-card p-4 rounded-xl shadow-lg h-96 overflow-y-auto custom-scroll">
+                    <h3 class="text-xl font-bold mb-4 border-b pb-2">${T('users')}</h3>
+                    <ul class="space-y-2">
+                        ${userList}
+                    </ul>
+                </div>
+            `;
+        };
+
+        // --- ADMIN PASSWORD RESET (Manual Input) ---
+        window.promptResetPassword = (userId) => {
+            const user = state.users.find(u => u.id === userId);
+            if (!user) return;
+
+            const html = `
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('reset_password')} for ${user.username}</h2>
+                <form id="reset-password-form">
+                    <input type="hidden" name="userId" value="${userId}">
+                    <div class="mb-4">
+                        <label for="new_password" class="block text-sm font-medium mb-1">${T('new_password_input')}</label>
+                        <input type="password" id="new_password" name="new_password" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" required>
+                    </div>
+                    <div class="mb-4">
+                        <label for="confirm_password" class="block text-sm font-medium mb-1">${T('confirm_password_input')}</label>
+                        <input type="password" id="confirm_password" name="confirm_password" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" required>
+                    </div>
+                    <p id="password-reset-error" class="text-red-500 text-sm mb-4 hidden">${T('password_mismatch')}</p>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm rounded-lg bg-gray-200 dark:bg-gray-600">${T('cancel')}</button>
+                        <button type="submit" class="px-4 py-2 text-sm rounded-lg text-white bg-yellow-500 hover:bg-yellow-600">${T('set_new_password')}</button>
+                    </div>
+                </form>
+            `;
+            showModal(html);
+
+            document.getElementById('reset-password-form').onsubmit = (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const newPass = form.new_password.value;
+                const confirmPass = form.confirm_password.value;
+                const errorDisplay = document.getElementById('password-reset-error');
+                errorDisplay.classList.add('hidden');
+
+                if (newPass !== confirmPass) {
+                    errorDisplay.textContent = T('password_mismatch');
+                    errorDisplay.classList.remove('hidden');
+                    return;
+                }
+
+                const targetUser = state.users.find(u => u.id === userId);
+                if (targetUser) {
+                    targetUser.password = newPass;
+                    saveUsers();
+                    closeModal();
+                    alert(`${T('reset_success')} ${T('new_password')} ${newPass}`);
+                }
+            };
+        };
+
+
+        const renderSessionsActivity = () => {
+            const sessionsList = state.sessions.slice().reverse().map(session => {
+                const loginTime = new Date(session.loginTime).toLocaleString();
+                const isActive = !session.logoutTime;
+                const statusLabel = isActive ? T('active') : T('closed');
+                const statusColor = isActive ? 'bg-green-500' : 'bg-red-500';
+                const logoutTimeDisplay = session.logoutTime ? new Date(session.logoutTime).toLocaleString() : 'N/A';
+
+                return `
+                    <li class="p-3 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
+                        <div>
+                            <p class="font-semibold">${session.username}</p>
+                            <p class="text-xs text-gray-500 dark:text-gray-400">ID: ${session.userId}</p>
+                            <p class="text-sm text-gray-500">${T('last_login')}: ${loginTime}</p>
+                            <p class="text-sm text-gray-500">${T('last_logout')}: ${logoutTimeDisplay}</p>
+                            <p class="text-sm font-bold text-accent">${T('orders_handled')}: ${session.ordersHandled || 0}</p>
+                        </div>
+                        <span class="px-3 py-1 text-xs font-bold text-white rounded-full ${statusColor}">
+                            ${statusLabel}
+                        </span>
+                    </li>
+                `;
+            }).join('');
+
+            return `
+                <div class="bg-card p-4 rounded-xl shadow-lg h-96 overflow-y-auto custom-scroll">
+                    <h3 class="text-xl font-bold mb-4 border-b pb-2">${T('sessions')} (${T('sales_summary')})</h3>
+                    <ul class="space-y-2">
+                        ${sessionsList.length > 0 ? sessionsList : '<p class="text-gray-500">No session data available.</p>'}
+                    </ul>
+                </div>
+            `;
+        };
+
+        // --- MENU MANAGER VIEW (ADMIN ONLY) ---
+
+        const renderMenuManager = () => {
+            const menuList = state.menu.map(item => `
+                <li class="bg-gray-50 dark:bg-gray-700 p-3 rounded-lg flex items-center justify-between">
+                    <div class="flex items-center space-x-3 w-3/4">
+                        <img src="${item.imageUrl || 'https://placehold.co/40x40/ccc/000?text=IMG'}" alt="${item.name}" class="w-12 h-12 rounded-lg object-cover flex-shrink-0">
+                        <div class="truncate">
+                            <p class="font-semibold truncate">${item.name}</p>
+                            <p class="text-sm text-gray-500">${item.category} | ${formatUSD(item.price)}</p>
+                        </div>
+                    </div>
+                    <div class="flex space-x-2 flex-shrink-0">
+                        <button onclick="promptEditItem('${item.id}')" class="px-3 py-1 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">
+                            ${T('edit_item')}
+                        </button>
+                        <button onclick="promptDeleteItem('${item.id}')" class="px-3 py-1 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition">
+                            ${T('delete')}
+                        </button>
+                    </div>
+                </li>
+            `).join('');
+
+            document.getElementById('content').innerHTML = `
+                <div class="p-6 max-w-4xl mx-auto">
+                    <h2 class="text-3xl font-bold text-accent mb-6">${T('menu_management')}</h2>
+                    <button onclick="promptEditItem(null)" class="mb-6 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition font-semibold flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+                        ${T('add_item')}
+                    </button>
+                    <div class="bg-card p-4 rounded-xl shadow-lg">
+                        <ul class="space-y-3">
+                            ${menuList.length > 0 ? menuList : '<p class="text-gray-500">No menu items added.</p>'}
+                        </ul>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.promptEditItem = (itemId) => {
+            const isEdit = !!itemId;
+            const item = isEdit ? state.menu.find(i => i.id === itemId) : {};
+            const title = isEdit ? T('edit_item') : T('add_item');
+            const categoryOptions = CATEGORIES.map(cat => `
+                <option value="${cat}" ${item.category === cat ? 'selected' : ''}>${cat}</option>
+            `).join('');
+
+            const html = `
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${title}</h2>
+                <form id="menu-item-form">
+                    ${isEdit ? `<input type="hidden" name="id" value="${item.id}">` : ''}
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label for="name" class="block text-sm font-medium mb-1">${T('name')}</label>
+                            <input type="text" id="name" name="name" value="${item.name || ''}" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" required>
+                        </div>
+                        <div>
+                            <label for="price" class="block text-sm font-medium mb-1">${T('price')} (USD)</label>
+                            <input type="number" step="0.01" id="price" name="price" value="${item.price || ''}" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" required min="0.01">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div>
+                            <label for="category" class="block text-sm font-medium mb-1">${T('category')}</label>
+                            <select id="category" name="category" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" required>
+                                <option value="">Select Category</option>
+                                ${categoryOptions}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="imageUrl" class="block text-sm font-medium mb-1">${T('image_url')}</label>
+                            <input type="url" id="imageUrl" name="imageUrl" value="${item.imageUrl || ''}" placeholder="https://example.com/image.png" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700">
+                        </div>
+                    </div>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm rounded-lg text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-600 transition hover:bg-gray-300 dark:hover:bg-gray-500">${T('cancel')}</button>
+                        <button type="submit" class="px-4 py-2 text-sm rounded-lg text-white bg-accent transition hover:bg-amber-600">
+                            ${T('save')}
+                        </button>
+                    </div>
+                </form>
+            `;
+            showModal(html, 'max-w-xl');
+
+            document.getElementById('menu-item-form').onsubmit = (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const formData = new FormData(form);
+                const id = formData.get('id');
+                const newItem = {
+                    id: id || 'm' + Date.now(),
+                    name: formData.get('name').trim(),
+                    price: parseFloat(formData.get('price')),
+                    category: formData.get('category'),
+                    imageUrl: formData.get('imageUrl').trim()
+                };
+
+                if (isEdit) {
+                    const index = state.menu.findIndex(i => i.id === newItem.id);
+                    if (index !== -1) {
+                        state.menu[index] = newItem;
+                    }
+                } else {
+                    state.menu.push(newItem);
+                }
+
+                saveMenu();
+                closeModal();
+                renderMenuManager();
+            };
+        };
+
+        window.promptDeleteItem = (itemId) => {
+            const item = state.menu.find(i => i.id === itemId);
+            if (!item) return;
+
+            if (confirm(`${T('confirm_delete')} ${item.name}?`)) {
+                state.menu = state.menu.filter(i => i.id !== itemId);
+                saveMenu();
+                renderMenuManager();
+            }
+        };
+
+
+        // --- SALES REPORT VIEW ---
+
+        const updateSalesFilter = (value) => {
+            if (value.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                state.salesFilterDate = value;
+            } else if (['today', 'this_month', 'this_year', 'all_time'].includes(value)) {
+                state.salesFilterDate = value;
+            }
+            renderStaffSalesReportView();
+        };
+
+        // Reset data for the selected filter period
+        const resetSalesReport = () => {
+            const filter = state.salesFilterDate;
+            let ordersToDelete = [];
+            let filterString = '';
+
+            if (filter === 'all_time') {
+                ordersToDelete = state.orders;
+                filterString = T('all_time');
+            } else if (filter === 'this_month') {
+                const today = new Date();
+                const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().substring(0, 7);
+                ordersToDelete = state.orders.filter(order => order.timestamp.startsWith(monthStart));
+                filterString = T('this_month');
+            } else if (filter === 'this_year') {
+                const yearStart = new Date().getFullYear().toString();
+                ordersToDelete = state.orders.filter(order => order.timestamp.startsWith(yearStart));
+                filterString = T('this_year');
+            } else if (filter === formatDateForInput()) {
+                ordersToDelete = getOrdersByDate(filter);
+                filterString = T('today');
+            } else if (filter.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                ordersToDelete = getOrdersByDate(filter);
+                filterString = filter;
+            } else {
+                alert("Invalid filter selected for reset.");
+                return;
+            }
+            
+            if (ordersToDelete.length === 0) {
+                alert(`No sales data found for ${filterString} to reset.`);
+                return;
+            }
+
+            if (confirm(`${T('confirm_reset_today').replace('selected date', filterString)}`)) {
+                const orderIdsToDelete = ordersToDelete.map(o => o.id);
+                state.orders = state.orders.filter(o => !orderIdsToDelete.includes(o.id));
+                saveOrders();
+                alert(T('reset_success_report').replace('selected date', filterString));
+                renderStaffSalesReportView();
+            }
+        };
+
+        window.renderOrderDetailsModal = (orderId) => {
+            const order = state.orders.find(o => o.id === orderId);
+            if (!order) return;
+            
+            const { total, paymentType, amountReceived, change, transactionCurrency } = order;
+            const receiptDate = new Date(order.timestamp).toLocaleString(getLang() === 'km' ? 'km-KH' : 'en-US');
+
+            const totalPrimary = (transactionCurrency === 'KHR') ? usdToKhr(total) : total;
+            const totalSecondary = (transactionCurrency === 'KHR') ? total : usdToKhr(total);
+            const primaryFormatter = (transactionCurrency === 'KHR') ? formatKHR : formatUSD;
+            const secondaryFormatter = (transactionCurrency === 'KHR') ? formatUSD : formatKHR;
+
+            let cashDetailsHtml = '';
+            if (paymentType === 'Cash') {
+                const receivedPrimary = (transactionCurrency === 'KHR') ? usdToKhr(amountReceived) : amountReceived;
+                const changePrimary = (transactionCurrency === 'KHR') ? usdToKhr(change) : change;
+                
+                cashDetailsHtml = `
+                    <p><strong>${T('amount_received')}:</strong> ${primaryFormatter(receivedPrimary)}</p>
+                    <p><strong>${T('change_due')}:</strong> ${primaryFormatter(changePrimary)}</p>
+                `;
+            }
+
+            const itemRows = order.items.map(item => {
+                const customization = [];
+                if (item.sugar !== 'N/A') customization.push(`${T('sugar')}: ${item.sugar}`);
+                if (item.note) customization.push(`${T('note')}: ${item.note}`);
+
+                const detailLine = customization.length > 0 ? `<div class="text-[8px] italic ml-2 text-gray-600">(${customization.join(', ')})</div>` : '';
+                
+                const itemTotalPrimary = (transactionCurrency === 'KHR') ? usdToKhr(item.price * item.qty) : (item.price * item.qty);
+
+                return `
+                    <div class="flex justify-between border-t border-gray-100 pt-1">
+                        <span class="w-1/2">${item.qty} x ${item.name}</span>
+                        <span class="w-1/4 text-right">${formatUSD(item.price)}</span>
+                        <span class="w-1/4 text-right font-semibold">${primaryFormatter(itemTotalPrimary)}</span>
+                    </div>
+                    ${detailLine}
+                `;
+            }).join('');
+
+            const html = `
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('receipt')} (Order ID: ${order.id})</h2>
+                <div class="space-y-3 text-sm">
+                    <p><strong>${T('date')}:</strong> ${receiptDate}</p>
+                    <p><strong>${T('payment')}:</strong> ${paymentType}</p>
+                    ${cashDetailsHtml}
+                    <p class="text-lg font-bold"><strong>${T('total')} ${transactionCurrency}:</strong> ${primaryFormatter(totalPrimary)}</p>
+                    <p class="text-md font-medium text-gray-500"><strong>Total ${transactionCurrency === 'USD' ? 'KHR' : 'USD'}:</strong> ${secondaryFormatter(totalSecondary)}</p>
+                </div>
+                <div class="mt-4 p-3 bg-gray-100 dark:bg-gray-700 rounded-lg">
+                    <h3 class="font-bold border-b pb-1 mb-2">${T('item_details')}</h3>
+                    <div class="space-y-1 text-xs">
+                        ${itemRows}
+                    </div>
+                </div>
+                <div class="mt-4 flex justify-end space-x-3">
+                    <button onclick="closeModal()" class="px-4 py-2 text-sm rounded-lg bg-gray-200 dark:bg-gray-600">${T('close')}</button>
+                    <button onclick="renderReceipt(state.orders.find(o => o.id === '${orderId}')); closeModal();" class="px-4 py-2 text-sm rounded-lg text-white bg-blue-500 hover:bg-blue-600">
+                        Print Receipt
+                    </button>
+                </div>
+            `;
+            showModal(html, 'max-w-lg');
+        };
+
+        const renderStaffSalesReportView = () => {
+            const selectedDateString = state.salesFilterDate;
+            let orders = [];
+            let filterTitle = T('all_time');
+
+            if (selectedDateString) {
+                if (selectedDateString === 'all_time') {
+                    orders = state.orders;
+                    filterTitle = T('all_time');
+                } else if (selectedDateString === 'this_month') {
+                    const today = new Date();
+                    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().substring(0, 7);
+                    orders = state.orders.filter(order => order.timestamp.startsWith(monthStart));
+                    filterTitle = T('this_month');
+                } else if (selectedDateString === 'this_year') {
+                    const yearStart = new Date().getFullYear().toString();
+                    orders = state.orders.filter(order => order.timestamp.startsWith(yearStart));
+                    filterTitle = T('this_year');
+                } else if (selectedDateString === formatDateForInput()) {
+                    orders = getOrdersByDate(selectedDateString);
+                    filterTitle = T('today');
+                } else if (selectedDateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                    orders = getOrdersByDate(selectedDateString);
+                    filterTitle = selectedDateString;
+                } else {
+                    orders = state.orders;
+                }
+            } else {
+                orders = state.orders;
+            }
+
+            const summary = calculateSalesSummary(orders);
+
+            const itemRows = summary.itemSalesArray.map(item => `
+                <tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
+                    <td class="p-3 font-medium">${item.name}</td>
+                    <td class="p-3 text-right">${item.qty}</td>
+                    <td class="p-3 text-right">${formatUSD(item.revenue)}</td>
+                </tr>
+            `).join('');
+
+            document.getElementById('content').innerHTML = `
+                <div class="p-6 space-y-6 max-w-6xl mx-auto">
+                    <h2 class="text-3xl font-bold text-accent">${T('sales_report')} - ${filterTitle}</h2>
+                    
+                    <div class="bg-card p-4 rounded-xl shadow-lg flex flex-wrap gap-4 items-center">
+                        <label for="sales-date-filter" class="font-medium">${T('time_period')}:</label>
+                        <select id="sales-date-filter" onchange="updateSalesFilter(this.value)" class="p-2 border rounded-lg bg-gray-100 dark:bg-gray-700">
+                            <option value="${formatDateForInput()}" ${state.salesFilterDate === formatDateForInput() ? 'selected' : ''}>${T('today')}</option>
+                            <option value="this_month" ${state.salesFilterDate === 'this_month' ? 'selected' : ''}>${T('this_month')}</option>
+                            <option value="this_year" ${state.salesFilterDate === 'this_year' ? 'selected' : ''}>${T('this_year')}</option>
+                            <option value="all_time" ${state.salesFilterDate === 'all_time' ? 'selected' : ''}>${T('all_time')}</option>
+                            <option value="date_picker_placeholder" disabled>--- Select Date ---</option>
+                        </select>
+                        <input type="date" id="date-input-sync" onchange="updateSalesFilter(this.value)" value="${state.salesFilterDate.match(/^\d{4}-\d{2}-\d{2}$/) ? state.salesFilterDate : formatDateForInput()}" class="p-2 border rounded-lg bg-gray-100 dark:bg-gray-700">
+                        
+                        ${state.currentUser.role === 'admin' ? `
+                        <button onclick="resetSalesReport()" class="ml-auto px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition font-semibold">
+                            ${T('reset_report')}
+                        </button>
+                        ` : ''}
+                    </div>
+
+                    ${renderSalesSummary(summary)}
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div class="bg-card p-4 rounded-xl shadow-lg">
+                            <h3 class="text-xl font-bold mb-4 border-b pb-2">Payment Type (USD)</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center p-3 bg-green-100 dark:bg-green-900/50 rounded-lg">
+                                    <span class="font-medium">${T('cash_revenue')}</span>
+                                    <span class="font-bold text-lg text-green-700 dark:text-green-300">${formatUSD(summary.cashRevenue)}</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-blue-100 dark:bg-blue-900/50 rounded-lg">
+                                    <span class="font-medium">${T('qr_revenue')}</span>
+                                    <span class="font-bold text-lg text-blue-700 dark:text-blue-300">${formatUSD(summary.qrRevenue)}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="lg:col-span-2 bg-card p-4 rounded-xl shadow-lg">
+                            <h3 class="text-xl font-bold mb-4 border-b pb-2">${T('item_sales_breakdown')} (USD)</h3>
+                            <div class="h-96 overflow-y-auto custom-scroll">
+                                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                                    <thead class="bg-gray-50 dark:bg-gray-800 sticky top-0">
+                                        <tr>
+                                            <th class="p-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-400">${T('name')}</th>
+                                            <th class="p-3 text-right text-sm font-semibold text-gray-600 dark:text-gray-400">${T('qty')}</th>
+                                            <th class="p-3 text-right text-sm font-semibold text-gray-600 dark:text-gray-400">${T('total_revenue')}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                                        ${itemRows.length > 0 ? itemRows : `<tr><td colspan="3" class="p-4 text-center text-gray-500">No sales data for this period.</td></tr>`}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h3 class="text-xl font-bold mb-4 border-b pb-2 mt-6">${T('detailed_orders')} (${orders.length} orders)</h3>
+                    <div class="bg-card p-4 rounded-xl shadow-lg overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                            <thead class="bg-gray-50 dark:bg-gray-800 sticky top-0">
+                                <tr>
+                                    <th class="p-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-400">ID</th>
+                                    <th class="p-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-400">${T('date')} / Time</th>
+                                    <th class="p-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-400">${T('payment')}</th>
+                                    <th class="p-3 text-right text-sm font-semibold text-gray-600 dark:text-gray-400">${T('change_due')}</th>
+                                    <th class="p-3 text-right text-sm font-semibold text-gray-600 dark:text-gray-400">${T('total')}</th>
+                                    <th class="p-3 text-center text-sm font-semibold text-gray-600 dark:text-gray-400">${T('actions')}</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                                ${orders.slice().reverse().map(order => `
+                                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+                                    <td class="p-3 text-xs text-gray-500">${order.id.substring(0, 6)}...</td>
+                                    <td class="p-3 text-sm">${new Date(order.timestamp).toLocaleString()}</td>
+                                    <td class="p-3 text-sm">${order.paymentType}</td>
+                                    <td class="p-3 text-right text-sm">${formatUSD(order.change)}</td>
+                                    <td class="p-3 text-right font-semibold">${formatPrimaryCurrency(order.total)} <span class="text-xs text-gray-500">(${order.transactionCurrency})</span></td>
+                                    <td class="p-3 text-center">
+                                        <button onclick="renderOrderDetailsModal('${order.id}')" class="px-3 py-1 text-xs bg-indigo-500 text-white rounded-lg hover:bg-indigo-600">
+                                            View
+                                        </button>
+                                    </td>
+                                </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+            // Manually sync date input and select after rendering
+            const dateInput = document.getElementById('date-input-sync');
+            const selectFilter = document.getElementById('sales-date-filter');
+            if (state.salesFilterDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                selectFilter.value = formatDateForInput(); // Select 'Today' in dropdown if date selected is today
+                if (state.salesFilterDate !== formatDateForInput()) {
+                    // This is a selected historical date, keep the input value as is, select 'Today' for dropdown if it's the current date
+                }
+            } else if (state.salesFilterDate === 'this_month') {
+                selectFilter.value = 'this_month';
+                dateInput.value = '';
+            } else if (state.salesFilterDate === 'this_year') {
+                selectFilter.value = 'this_year';
+                dateInput.value = '';
+            } else if (state.salesFilterDate === 'all_time') {
+                selectFilter.value = 'all_time';
+                dateInput.value = '';
+            }
+        };
+
+
+        // --- SETTINGS MODAL & SELF-SERVICE PASSWORD CHANGE --- 
+
+        // Helper function for self-service password change
+        const changePassword = (newPassword) => {
+            const user = state.users.find(u => u.id === state.currentUser.id);
+            if (user) {
+                user.password = newPassword;
+                saveUsers();
+                closeModal();
+                alert(T('password_change_success'));
+            }
+        };
+
+        window.renderChangePasswordModal = () => {
+            const html = `
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('change_password_title')}</h2>
+                <form id="change-my-password-form">
+                    <div class="mb-4">
+                        <label for="current_password" class="block text-sm font-medium mb-1">${T('current_password')}</label>
+                        <input type="password" id="current_password" name="current_password" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" required>
+                    </div>
+                    <div class="mb-4">
+                        <label for="new_password_self" class="block text-sm font-medium mb-1">${T('new_password_input')}</label>
+                        <input type="password" id="new_password_self" name="new_password" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" required>
+                    </div>
+                    <div class="mb-4">
+                        <label for="confirm_password_self" class="block text-sm font-medium mb-1">${T('confirm_password_input')}</label>
+                        <input type="password" id="confirm_password_self" name="confirm_password" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" required>
+                    </div>
+                    <p id="password-change-error" class="text-red-500 text-sm mb-4 hidden"></p>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" onclick="renderSettingsModal()" class="px-4 py-2 text-sm rounded-lg bg-gray-200 dark:bg-gray-600">${T('cancel')}</button>
+                        <button type="submit" class="px-4 py-2 text-sm rounded-lg text-white bg-red-500 hover:bg-red-600">${T('save')}</button>
+                    </div>
+                </form>
+            `;
+            showModal(html);
+
+            document.getElementById('change-my-password-form').onsubmit = (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const currentPass = form.current_password.value;
+                const newPass = form.new_password.value;
+                const confirmPass = form.confirm_password.value;
+                const errorDisplay = document.getElementById('password-change-error');
+                errorDisplay.classList.add('hidden');
+
+                if (newPass !== confirmPass) {
+                    errorDisplay.textContent = T('password_mismatch');
+                    errorDisplay.classList.remove('hidden');
+                    return;
+                }
+                
+                if (currentPass !== state.currentUser.password) {
+                    errorDisplay.textContent = T('current_password_incorrect');
+                    errorDisplay.classList.remove('hidden');
+                    return;
+                }
+
+                changePassword(newPass);
+            };
+        };
+
+        window.renderSettingsModal = () => {
+            const isDarkMode = state.settings.theme === 'dark';
+            const isKhmer = state.settings.language === 'km';
+            const is80mm = state.settings.receiptWidth === '80mm';
+
+            const html = `
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('settings')}</h2>
+                
+                <div class="mb-6 border-b pb-4 border-gray-200 dark:border-gray-600">
+                    <button type="button" onclick="renderChangePasswordModal()" class="w-full p-3 bg-red-500 text-white rounded-lg hover:bg-red-600 transition font-semibold">
+                        ${T('change_password_title')}
+                    </button>
+                </div>
+
+                <form id="settings-form" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">${T('theme')}</label>
+                        <div class="flex space-x-4">
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="theme" value="light" class="form-radio text-accent" ${!isDarkMode ? 'checked' : ''}>
+                                <span class="ml-2">${T('light')}</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="theme" value="dark" class="form-radio text-accent" ${isDarkMode ? 'checked' : ''}>
+                                <span class="ml-2">${T('dark')}</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium mb-1">${T('language')}</label>
+                        <div class="flex space-x-4">
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="language" value="en" class="form-radio text-accent" ${!isKhmer ? 'checked' : ''}>
+                                <span class="ml-2">${T('english')}</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="language" value="km" class="form-radio text-accent" ${isKhmer ? 'checked' : ''}>
+                                <span class="ml-2">${T('khmer')}</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Primary Transaction Currency</label>
+                        <div class="flex space-x-4">
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="primaryCurrency" value="USD" class="form-radio text-accent" ${state.settings.primaryCurrency === 'USD' ? 'checked' : ''}>
+                                <span class="ml-2">USD - United States Dollar ($)</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="primaryCurrency" value="KHR" class="form-radio text-accent" ${state.settings.primaryCurrency === 'KHR' ? 'checked' : ''}>
+                                <span class="ml-2">KHR - Cambodian Riel (៛)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium mb-1">${T('receipt_width')}</label>
+                        <div class="flex space-x-4">
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="receiptWidth" value="58mm" class="form-radio text-accent" ${!is80mm ? 'checked' : ''}>
+                                <span class="ml-2">${T('r_58mm')}</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="receiptWidth" value="80mm" class="form-radio text-accent" ${is80mm ? 'checked' : ''}>
+                                <span class="ml-2">${T('r_80mm')}</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label for="fxRate" class="block text-sm font-medium mb-1">${T('fx_rate')}</label>
+                        <input type="number" step="1" id="fxRate" name="fxRate" value="${state.settings.fxRate}" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" min="1000" required>
+                    </div>
+
+                    <div>
+                        <label for="qrCodeImageUrl" class="block text-sm font-medium mb-1">${T('qr_code_image_url')}</label>
+                        <input type="url" id="qrCodeImageUrl" name="qrCodeImageUrl" value="${state.settings.qrCodeImageUrl}" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" placeholder="https://example.com/qr.png">
+                    </div>
+
+                    <div>
+                        <label for="receiptLogoUrl" class="block text-sm font-medium mb-1">${T('receipt_logo_url')}</label>
+                        <input type="url" id="receiptLogoUrl" name="receiptLogoUrl" value="${state.settings.receiptLogoUrl}" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" placeholder="https://example.com/logo.png">
+                    </div>
+
+
+                    <div class="flex justify-end space-x-3 pt-4">
+                        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm rounded-lg bg-gray-200 dark:bg-gray-600">${T('cancel')}</button>
+                        <button type="submit" class="px-4 py-2 text-sm rounded-lg text-white bg-accent hover:bg-amber-600">${T('save')}</button>
+                    </div>
+                </form>
+            `;
+            showModal(html);
+
+            document.getElementById('settings-form').onsubmit = (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const formData = new FormData(form);
+                
+                state.settings.theme = formData.get('theme');
+                state.settings.language = formData.get('language');
+                state.settings.primaryCurrency = formData.get('primaryCurrency'); // <-- NEW SAVE
+                state.settings.fxRate = parseInt(formData.get('fxRate'));
+                state.settings.receiptWidth = formData.get('receiptWidth');
+                state.settings.qrCodeImageUrl = formData.get('qrCodeImageUrl');
+                state.settings.receiptLogoUrl = formData.get('receiptLogoUrl'); 
+
+                saveSettings();
+                closeModal();
+            };
+        };
+
+
+        // --- MAIN APPLICATION ROUTER ---
+
+        window.setStateView = (view) => {
+            state.currentView = view;
+            renderApp();
+        }
+
+        const renderApp = () => {
+            applyTheme(); // Apply theme on render
+
+            if (!state.currentUser) {
+                renderLogin();
+                return;
+            }
+
+            const appDiv = document.getElementById('app');
+            appDiv.innerHTML = `
+                ${renderNav()}
+                <main id="content" class="h-[calc(100vh-64px)] overflow-y-auto">
+                    </main>
+            `;
+
+            const userRole = state.currentUser.role;
+            
+            switch (state.currentView) {
+                case 'admin':
+                    userRole === 'admin' ? renderAdminDashboard() : renderStaffDashboard();
+                    break;
+                case 'menu_manager':
+                    userRole === 'admin' ? renderMenuManager() : renderStaffDashboard();
+                    break;
+                case 'sales_report': // New sales report view for all users
+                    renderStaffSalesReportView();
+                    break;
+                case 'pos':
+                default:
+                    renderStaffDashboard();
+                    break;
+            }
+        };
+
+        // --- INITIALIZATION ---
+        loadInitialData();
+        renderApp();
+    </script>
+</body>
+</html>
