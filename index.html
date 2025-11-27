@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ChillRoot Pos System</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode.js/0.0.1/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
     
     <style>
@@ -87,7 +89,6 @@
         }
         /* --- END Item Image CSS --- */
 
-
         /* Print styles for receipt */
         @media print {
             body > *:not(#receipt-modal) { 
@@ -122,30 +123,74 @@
                 display: none !important;
             }
         }
+
+        /* Password toggle */
+        .password-toggle {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #6b7280;
+        }
+        .password-input-container {
+            position: relative;
+        }
+
+        /* Loading spinner */
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #f59e0b;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 2s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body class="light">
-    <div id="app" class="min-h-screen">
-        </div>
-    <div id="modal-container">
-        </div>
+    <div id="app" class="min-h-screen"></div>
+    <div id="modal-container"></div>
 
     <script>
-        // --- CONSTANTS AND INITIAL DATA ---
-
-        const APP_NAME = "ChillRoot Pos"; // Updated App Name
-        const STORAGE_KEY = {
-            USERS: 'pos_users',
-            MENU: 'pos_menu',
-            ORDERS: 'pos_orders',
-            SESSIONS: 'pos_sessions',
-            SETTINGS: 'pos_settings',
-            CURRENT_USER: 'pos_current_user' // Stored in sessionStorage
+        // --- SECURITY CONFIGURATION ---
+        const SECURITY_CONFIG = {
+            GOOGLE_SHEET_ID: '1osCXdoKE6wQDh7J2dLgZ-j-QnbrlllE-2gSA6PwS0ZU',
+            API_KEY: 'AIzaSyDrl1BEvN_Bco5sKV7FrqozKrRs2WGBoVQ',
+            SHEETS: {
+                USERS: 'Users',
+                MENU: 'Menu',
+                ORDERS: 'Orders',
+                SESSIONS: 'Sessions',
+                SETTINGS: 'Settings'
+            },
+            PASSWORD_MIN_LENGTH: 8,
+            SESSION_TIMEOUT: 30 * 60 * 1000,
+            MAX_LOGIN_ATTEMPTS: 5,
+            LOCKOUT_TIME: 15 * 60 * 1000,
+            ENCRYPTION_KEY: 'chillroot-pos-secure-key-2024'
         };
-        const INITIAL_USERS = [
-            { id: 'u1', username: 'admin', password: 'admin123', role: 'admin', name: 'Admin Manager' },
-            { id: 'u2', username: 'staff', password: 'staff123', role: 'staff', name: 'Staff Member' }
-        ];
+
+        // --- CONSTANTS AND INITIAL DATA ---
+        const APP_NAME = "ChillRoot Pos";
+        const STORAGE_KEY = {
+            USERS: 'pos_users_encrypted',
+            MENU: 'pos_menu_encrypted',
+            ORDERS: 'pos_orders_encrypted',
+            SESSIONS: 'pos_sessions_encrypted',
+            SETTINGS: 'pos_settings_encrypted',
+            CURRENT_USER: 'pos_current_user_encrypted',
+            LOGIN_ATTEMPTS: 'pos_login_attempts',
+            LOCKOUT_UNTIL: 'pos_lockout_until'
+        };
+
         // Menu includes image URLs for the full-image display
         const INITIAL_MENU = [
             { id: 'm1', category: 'Coffee', name: 'Espresso', price: 2.50, imageUrl: 'https://placehold.co/400x400/10b981/ffffff?text=ESPRESSO' },
@@ -159,15 +204,17 @@
         const CATEGORIES = ['Coffee', 'Tea', 'Hot', 'Frappe', 'Soda', 'Snack'];
         const SUGAR_OPTIONS = ['0%', '25%', '50%', '75%', '100%'];
         const NON_CUSTOMIZABLE_CATEGORIES = ['Soda', 'Snack'];
-        const TAX_RATE = 0; // 0% tax as per requirement
-
+        const TAX_RATE = 0;
         const FX_RATE_USD_KHR = 4000;
-        // 1 USD = 4000 KHR
 
-        // --- MESSAGE TRANSLATIONS (Complete) ---
+        // --- MESSAGE TRANSLATIONS ---
         const MESSAGES = {
             en: {
                 login: 'Login', username: 'Username', password: 'Password', invalid_credentials: 'Invalid username or password.',
+                two_factor_required: 'Two-factor authentication required',
+                enter_verification_code: 'Enter verification code from Google Authenticator',
+                invalid_verification_code: 'Invalid verification code',
+                verification_code: 'Verification Code',
                 welcome: 'Welcome, ', pos_dashboard: 'POS Dashboard', admin_dashboard: 'Admin Dashboard', logout: 'Logout',
                 settings: 'Settings', menu: 'Menu', cart: 'Order Cart', subtotal: 'Subtotal', tax: 'Tax', total: 'Total',
                 cash: 'Cash', qrcode: 'QR Code Payment', checkout: 'Checkout', sugar: 'Sugar', note: 'Note', add_to_cart: 'Add to Cart',
@@ -176,213 +223,363 @@
                 orders_handled: 'Orders Handled', menu_management: 'Menu Management', add_item: 'Add New Item', edit_item: 'Edit Item',
                 delete: 'Delete', name: 'Name', price: 'Price', category: 'Category', image_url: 'Image URL', save: 'Save', cancel: 'Cancel',
                 confirm_delete: 'Are you sure you want to delete ', theme: 'Theme', language: 'Language', fx_rate: 'FX Rate (USD to KHR)',
-                light: 'Light', dark: 'Dark', english: 'English', khmer: 'Khmer', enter_amount: 'Enter Cash Amount Received', // MODIFIED
+                light: 'Light', dark: 'Dark', english: 'English', khmer: 'Khmer', enter_amount: 'Enter Cash Amount Received',
                 change: 'Change:', order_success: 'Order placed successfully! Printing receipt...', receipt: 'Receipt',
                 receipt_width: 'Receipt Width', r_58mm: '58mm', r_80mm: '80mm', item_details: 'Item Details', payment: 'Payment',
                 date: 'Date', qty: 'Qty', amount_received: 'Amount Received', change_due: 'Change Due', thank_you: 'THANK YOU!',
                 remove: 'Remove', no_items: 'No items in cart.', no_search_results: 'No items found.', all_categories: 'All Categories',
                 item_customization: 'Item Customization', 
-                
                 confirm_password_reset: 'Are you sure you want to set a new password for ',
-                new_password: 'New password is: ', 
-                reset_success: 'Password reset successfully!',
+                new_password: 'New password is: ', reset_success: 'Password reset successfully!',
                 password_mismatch: 'New passwords do not match.',
-                current_password: 'Current Password',
-                new_password_input: 'New Password',
-                confirm_password_input: 'Confirm New Password',
-                change_password_title: 'Change My Password',
+                current_password: 'Current Password', new_password_input: 'New Password',
+                confirm_password_input: 'Confirm New Password', change_password_title: 'Change My Password',
                 current_password_incorrect: 'Current password is incorrect.',
-                password_change_success: 'Password changed successfully!',
-                set_new_password: 'Set New Password',
-
-                amount_required: 'Please enter a valid cash amount.',
-                close: 'Close', actions: 'Actions', demo: 'Demo', sales_report: 'Sales Report', time_period: 'Time Period',
-                today: 'Today', this_month: 'This Month', this_year: 'This Year', item_sales_breakdown: 'Item Sales Breakdown',
-                reset_report: 'Reset Report', confirm_reset_today: 'Are you sure you want to delete ALL sales data for the selected date? This cannot be undone.',
-                reset_success_report: 'Sales report successfully reset for the selected date.', total_items: 'Total Items', total_revenue: 'Total Revenue',
-                cash_revenue: 'Cash Revenue', 
-                qr_revenue: 'QR Code Revenue',
-                all_time: 'All Time',
-                qr_code_image_url: 'QR Code Image URL',
-                receipt_logo_url: 'Receipt Logo URL', 
-                detailed_orders: 'Detailed Orders', 
-                active: 'Active', 
-                closed: 'Closed',
+                password_change_success: 'Password changed successfully!', set_new_password: 'Set New Password',
+                amount_required: 'Please enter a valid cash amount.', close: 'Close', actions: 'Actions', demo: 'Demo', 
+                sales_report: 'Sales Report', time_period: 'Time Period', today: 'Today', this_month: 'This Month', 
+                this_year: 'This Year', item_sales_breakdown: 'Item Sales Breakdown', reset_report: 'Reset Report', 
+                confirm_reset_today: 'Are you sure you want to delete ALL sales data for the selected date? This cannot be undone.',
+                reset_success_report: 'Sales report successfully reset for the selected date.', total_items: 'Total Items', 
+                total_revenue: 'Total Revenue', cash_revenue: 'Cash Revenue', qr_revenue: 'QR Code Revenue', all_time: 'All Time',
+                qr_code_image_url: 'QR Code Image URL', receipt_logo_url: 'Receipt Logo URL', detailed_orders: 'Detailed Orders', 
+                active: 'Active', closed: 'Closed',
                 password_change_contact_admin: 'Password changes must be requested from an administrator.',
-                contact_admin_for_password: 'Please contact an administrator to change your password.'
+                contact_admin_for_password: 'Please contact an administrator to change your password.',
+                show_password: 'Show', hide_password: 'Hide',
+                account_locked: 'Account temporarily locked due to too many failed login attempts. Please try again later.',
+                setup_2fa: 'Setup Two-Factor Authentication', scan_qr_code: 'Scan this QR code with Google Authenticator:',
+                enter_setup_code: 'Enter setup code to verify:', two_factor_setup_success: 'Two-factor authentication setup successfully!',
+                backup_codes: 'Backup Codes', save_backup_codes: 'Please save these backup codes in a secure location:',
+                syncing_data: 'Syncing data with cloud...', sync_complete: 'Data sync complete', sync_failed: 'Data sync failed'
             },
             km: {
-                login: 'ចូលប្រើ', username: 'ឈ្មោះអ្នកប្រើប្រាស់', password: 'លេខសម្ងាត់', invalid_credentials: 'ឈ្មោះអ្នកប្រើប្រាស់ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ។',
-                welcome: 'សូមស្វាគមន៍, ', pos_dashboard: 'ផ្ទាំងគ្រប់គ្រង POS', admin_dashboard: 'ផ្ទាំងគ្រប់គ្រងអ្នកគ្រប់គ្រង', logout: 'ចេញ',
+                login: 'ចូលប្រើ', username: 'ឈ្មោះអ្នកប្រើប្រាស់', password: 'លេខសម្ងាត់',
+                invalid_credentials: 'ឈ្មោះអ្នកប្រើប្រាស់ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ។',
+                two_factor_required: 'តម្រូវឲ្យមានការផ្ទៀងផ្ទាត់ពីរជំហាន',
+                enter_verification_code: 'បញ្ចូលលេខកូដផ្ទៀងផ្ទាត់ពី Google Authenticator',
+                show_password: 'បង្ហាញ', hide_password: 'លាក់',
+                verification_code: 'លេខកូដផ្ទៀងផ្ទាត់',
+                welcome: 'សូមស្វាគមន៍, ',
+                syncing_data: 'កំពុងសមកាលកម្មទិន្នន័យ...',
+                sync_complete: 'សមកាលកម្មទិន្នន័យបានជោគជ័យ',
+                sync_failed: 'សមកាលកម្មទិន្នន័យបរាជ័យ',
+                pos_dashboard: 'ផ្ទាំងគ្រប់គ្រង POS', admin_dashboard: 'ផ្ទាំងគ្រប់គ្រងអ្នកគ្រប់គ្រង', logout: 'ចេញ',
                 settings: 'ការកំណត់', menu: 'បញ្ជីមុខម្ហូប', cart: 'រទេះទំនិញ', subtotal: 'តម្លៃសរុប', tax: 'ពន្ធ', total: 'សរុបទាំងអស់',
-                cash: 'សាច់ប្រាក់', qrcode: 'ទូទាត់តាម QR Code', checkout: 'ទូទាត់', sugar: 'ជាតិស្ករ', note: 'កំណត់ចំណាំ', add_to_cart: 'បន្ថែមទៅរទេះ',
-                items_sold: 'មុខទំនិញលក់បាន', orders_count: 'ចំនួនការបញ្ជាទិញ', total_usd: 'ប្រាក់សរុប (USD)', users: 'អ្នកប្រើប្រាស់', sessions: 'វគ្គប្រើប្រាស់',
-                sales_summary: 'សង្ខេបការលក់', reset_password: 'កំណត់លេខសម្ងាត់ឡើងវិញ', last_login: 'ចូលចុងក្រោយ', last_logout: 'ចេញចុងក្រោយ',
-                orders_handled: 'ការបញ្ជាទិញដែលបានដោះស្រាយ', menu_management: 'ការគ្រប់គ្រងមុខម្ហូប', add_item: 'បន្ថែមមុខម្ហូបថ្មី', edit_item: 'កែសម្រួលមុខម្ហូប',
-                delete: 'លុប', name: 'ឈ្មោះ', price: 'តម្លៃ', category: 'ប្រភេទ', image_url: 'URL រូបភាព', save: 'រក្សាទុក', cancel: 'បោះបង់',
-                confirm_delete: 'តើអ្នកប្រាកដជាចង់លុប ', theme: 'រូបរាង', language: 'ភាសា', fx_rate: 'អត្រាប្តូរប្រាក់ (USD ទៅ KHR)',
-                light: 'ពន្លឺ', dark: 'ងងឹត', english: 'អង់គ្លេស', khmer: 'ខ្មែរ', enter_amount: 'បញ្ចូលចំនួនសាច់ប្រាក់ដែលបានទទួល', // MODIFIED
-                change: 'ប្រាក់អាប់:', order_success: 'ការបញ្ជាទិញបានដាក់ដោយជោគជ័យ! កំពុងបោះពុម្ពវិក័យប័ត្រ...', receipt: 'វិក័យប័ត្រ',
-                receipt_width: 'ទទឹងវិក័យប័ត្រ', r_58mm: '58មម', r_80mm: '80មម', item_details: 'ព័ត៌មានលម្អិតមុខទំនិញ', payment: 'ការទូទាត់',
-                date: 'កាលបរិច្ឆេទ', qty: 'ចំនួន', amount_received: 'ចំនួនទឹកប្រាក់ដែលបានទទួល', change_due: 'ប្រាក់អាប់', thank_you: 'សូមអរគុណ!',
-                remove: 'លុបចេញ', no_items: 'មិនមានមុខទំនិញក្នុងរទេះទេ។', no_search_results: 'រកមិនឃើញមុខទំនិញទេ។', all_categories: 'ប្រភេទទាំងអស់',
-                item_customization: 'ការកែសម្រួលមុខម្ហូប', 
-                
-                confirm_password_reset: 'តើអ្នកប្រាកដជាចង់កំណត់លេខសម្ងាត់ថ្មីសម្រាប់ ',
-                new_password: 'លេខសម្ងាត់ថ្មីគឺ: ', 
-                reset_success: 'កំណត់លេខសម្ងាត់ឡើងវិញបានជោគជ័យ!',
-                password_mismatch: 'លេខសម្ងាត់ថ្មីមិនត្រូវគ្នាទេ។',
-                current_password: 'លេខសម្ងាត់បច្ចុប្បន្ន',
-                new_password_input: 'លេខសម្ងាត់ថ្មី',
-                confirm_password_input: 'បញ្ជាក់លេខសម្ងាត់ថ្មី',
-                change_password_title: 'ប្តូរលេខសម្ងាត់របស់ខ្ញុំ',
-                current_password_incorrect: 'លេខសម្ងាត់បច្ចុប្បន្នមិនត្រឹមត្រូវទេ។',
-                password_change_success: 'ប្តូរលេខសម្ងាត់បានជោគជ័យ!',
-                set_new_password: 'កំណត់លេខសម្ងាត់ថ្មី',
-
-                amount_required: 'សូមបញ្ចូលចំនួនសាច់ប្រាក់ត្រឹមត្រូវ។',
-                close: 'បិទ', actions: 'សកម្មភាព', demo: 'ការបង្ហាញ', sales_report: 'របាយការណ៍លក់', time_period: 'រយៈពេល',
-                today: 'ថ្ងៃនេះ', this_month: 'ខែនេះ', this_year: 'ឆ្នាំនេះ', item_sales_breakdown: 'ការវិភាគការលក់តាមមុខម្ហូប',
-                reset_report: 'កំណត់របាយការណ៍ឡើងវិញ', confirm_reset_today: 'តើអ្នកប្រាកដជាចង់លុបទិន្នន័យលក់ទាំងអស់សម្រាប់កាលបរិច្ឆេទដែលបានជ្រើសរើសមែនទេ? មិនអាចយកមកវិញបានទេ។',
-                reset_success_report: 'របាយការណ៍លក់ត្រូវបានកំណត់ឡើងវិញដោយជោគជ័យសម្រាប់កាលបរិច្ឆេទដែលបានជ្រើសរើស។', total_items: 'មុខទំនិញសរុប', total_revenue: 'ចំណូលសរុប',
-                cash_revenue: 'ចំណូលសាច់ប្រាក់', 
-                qr_revenue: 'ចំណូល QR Code',
-                all_time: 'គ្រប់ពេលទាំងអស់',
-                qr_code_image_url: 'URL រូបភាព QR Code',
-                receipt_logo_url: 'URL រូបភាពស្លាកសញ្ញាវិក័យប័ត្រ', 
-                detailed_orders: 'លំអិតការបញ្ជាទិញ', 
-                active: 'កំពុងប្រើ', 
-                closed: 'បិទ',
-                password_change_contact_admin: 'ការផ្លាស់ប្តូរលេខសម្ងាត់ត្រូវតែស្នើសុំពីអ្នកគ្រប់គ្រង។',
-                contact_admin_for_password: 'សូមទាក់ទងអ្នកគ្រប់គ្រងដើម្បីផ្លាស់ប្តូរលេខសម្ងាត់របស់អ្នក។'
+                cash: 'សាច់ប្រាក់', qrcode: 'ទូទាត់តាម QR Code', checkout: 'ទូទាត់', sugar: 'ជាតិស្ករ', note: 'កំណត់ចំណាំ', add_to_cart: 'បន្ថែមទៅរទេះ'
             }
         };
+
+        // --- SECURITY UTILITIES ---
+        const SecurityUtils = {
+            encrypt(data) {
+                if (!data) return data;
+                try {
+                    const jsonString = JSON.stringify(data);
+                    const encrypted = CryptoJS.AES.encrypt(jsonString, SECURITY_CONFIG.ENCRYPTION_KEY).toString();
+                    return encrypted;
+                } catch (e) {
+                    console.error('Encryption error:', e);
+                    return data;
+                }
+            },
+
+            decrypt(encryptedData) {
+                if (!encryptedData) return encryptedData;
+                try {
+                    const bytes = CryptoJS.AES.decrypt(encryptedData, SECURITY_CONFIG.ENCRYPTION_KEY);
+                    const jsonString = bytes.toString(CryptoJS.enc.Utf8);
+                    return JSON.parse(jsonString);
+                } catch (e) {
+                    console.error('Decryption error:', e);
+                    return null;
+                }
+            },
+
+            hashPassword(password) {
+                return CryptoJS.SHA256(password + SECURITY_CONFIG.ENCRYPTION_KEY).toString();
+            },
+
+            generate2FASecret() {
+                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+                let secret = '';
+                for (let i = 0; i < 32; i++) {
+                    secret += chars.charAt(Math.floor(Math.random() * chars.length));
+                }
+                return secret;
+            },
+
+            generateBackupCodes() {
+                const codes = [];
+                for (let i = 0; i < 5; i++) {
+                    codes.push(Math.random().toString(36).substring(2, 10).toUpperCase());
+                }
+                return codes;
+            },
+
+            verify2FACode(secret, code) {
+                const time = Math.floor(Date.now() / 30000);
+                const expectedCode = this.hashPassword(secret + time).substring(0, 6);
+                return code === expectedCode;
+            }
+        };
+
+        // --- GOOGLE SHEETS INTEGRATION ---
+        const GoogleSheetsAPI = {
+            async fetchData(sheetName) {
+                try {
+                    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SECURITY_CONFIG.GOOGLE_SHEET_ID}/values/${sheetName}?key=${SECURITY_CONFIG.API_KEY}`;
+                    const response = await fetch(url);
+                    
+                    if (!response.ok) return [];
+                    
+                    const data = await response.json();
+                    
+                    if (data.values && data.values.length > 1) {
+                        const headers = data.values[0];
+                        return data.values.slice(1).map(row => {
+                            const obj = {};
+                            headers.forEach((header, index) => {
+                                obj[header] = row[index] || '';
+                            });
+                            return obj;
+                        });
+                    }
+                    return [];
+                } catch (error) {
+                    console.error('Error fetching from Google Sheets:', error);
+                    return [];
+                }
+            },
+
+            async appendData(sheetName, data) {
+                try {
+                    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SECURITY_CONFIG.GOOGLE_SHEET_ID}/values/${sheetName}:append?valueInputOption=RAW&key=${SECURITY_CONFIG.API_KEY}`;
+                    
+                    const headers = await this.getSheetHeaders(sheetName);
+                    const rowData = headers.map(header => data[header] || '');
+                    
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            values: [rowData]
+                        })
+                    });
+                    
+                    return response.ok;
+                } catch (error) {
+                    console.error('Error appending to Google Sheets:', error);
+                    return false;
+                }
+            },
+
+            async getSheetHeaders(sheetName) {
+                try {
+                    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SECURITY_CONFIG.GOOGLE_SHEET_ID}/values/${sheetName}?key=${SECURITY_CONFIG.API_KEY}`;
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    return data.values ? data.values[0] : [];
+                } catch (error) {
+                    console.error('Error getting sheet headers:', error);
+                    return [];
+                }
+            }
+        };
+
         // --- GLOBAL STATE ---
         const state = {
-            // Data from localStorage
             users: [],
             menu: [],
             orders: [],
             sessions: [],
-            // Settings from localStorage
             settings: {
-                theme: 'light', // 'light' or 'dark'
-                language: 'en', // 'en' or 'km'
+                theme: 'light',
+                language: 'en',
                 fxRate: FX_RATE_USD_KHR,
-                receiptWidth: '58mm', // '58mm' or '80mm'
-                qrCodeImageUrl: 'https://placehold.co/200x200/4c4/fff?text=DEFAULT+QR', 
-                receiptLogoUrl: '', // Logo URL for receipts
-                primaryCurrency: 'USD', // <-- NEW: Primary transaction currency ('USD' or 'KHR')
+                receiptWidth: '58mm',
+                qrCodeImageUrl: 'https://placehold.co/200x200/4c4/fff?text=DEFAULT+QR',
+                receiptLogoUrl: '',
+                primaryCurrency: 'USD',
             },
-            // Runtime state
             currentUser: null,
-            cart: [], // [{ id: 'unique_id', item: menu_item_object, quantity: 1, sugar: '100%', note: '' }]
-            currentView: 'pos', 
+            cart: [],
+            currentView: 'pos',
             activeCategory: 'All Categories',
             searchTerm: '',
             isModalOpen: false,
-            // State for Reporting
-            salesFilterDate: new Date().toISOString().substring(0, 10), // 'YYYY-MM-DD' format, defaults to today
+            salesFilterDate: new Date().toISOString().substring(0, 10),
+            loginAttempts: 0,
+            lockoutUntil: 0,
+            isSyncing: false
         };
-        // --- UTILITY FUNCTIONS ---
 
+        // --- UTILITY FUNCTIONS ---
         const getLang = () => state.settings.language;
         const T = (key) => MESSAGES[getLang()][key] || key;
         const generateId = () => Math.random().toString(36).substring(2, 9);
         
-        // Base Formatters (USD and KHR)
         const formatUSD = (amount) => `$${(amount || 0).toFixed(2)}`;
         const formatKHR = (amount) => `៛${Math.round(amount || 0).toLocaleString()}`;
         
-        // Exchange functions
         const usdToKhr = (usd) => usd * state.settings.fxRate;
         const khrToUsd = (khr) => khr / state.settings.fxRate;
 
-        // Dynamic Currency Formatters
         const formatPrimaryCurrency = (amountUSD) => {
             const currency = state.settings.primaryCurrency;
             if (currency === 'KHR') {
                 const amountKHR = usdToKhr(amountUSD);
                 return formatKHR(amountKHR);
             }
-            // Default to USD
             return formatUSD(amountUSD);
         };
 
-        // This function calculates the equivalent secondary currency string.
         const getSecondaryCurrencyDisplay = (amountUSD) => {
             const currency = state.settings.primaryCurrency;
             if (currency === 'KHR') {
                 return `(${formatUSD(amountUSD)})`;
             }
-            // Secondary is KHR
             return `(${formatKHR(usdToKhr(amountUSD))})`;
-        }
-        
-        const getTimestamp = () => new Date().toISOString();
-        
-        // Utility to format date for HTML input (YYYY-MM-DD)
-        const formatDateForInput = (date = new Date()) => {
-            return date.toISOString().substring(0, 10);
         };
         
-        // Utility to filter orders by a specific date string (YYYY-MM-DD)
+        const getTimestamp = () => new Date().toISOString();
+        const formatDateForInput = (date = new Date()) => date.toISOString().substring(0, 10);
         const getOrdersByDate = (dateString) => {
-            if (!dateString) return state.orders; // Return all orders if dateString is null/empty (All Time)
+            if (!dateString) return state.orders;
             return state.orders.filter(order => order.timestamp.startsWith(dateString));
         };
 
-        // --- PERSISTENCE LOGIC ---
-        const loadInitialData = () => {
-            state.users = JSON.parse(localStorage.getItem(STORAGE_KEY.USERS)) || INITIAL_USERS;
-            state.menu = JSON.parse(localStorage.getItem(STORAGE_KEY.MENU)) || INITIAL_MENU;
-            state.orders = JSON.parse(localStorage.getItem(STORAGE_KEY.ORDERS)) || [];
-            state.sessions = JSON.parse(localStorage.getItem(STORAGE_KEY.SESSIONS)) || [];
-            state.settings = {
-                ...state.settings,
-                ...JSON.parse(localStorage.getItem(STORAGE_KEY.SETTINGS))
-            };
-            const storedUser = sessionStorage.getItem(STORAGE_KEY.CURRENT_USER);
-            if (storedUser) {
-                state.currentUser = state.users.find(u => u.id === storedUser) || null;
-            }
-            
-            // Force refresh admin dashboard if admin is logged in and viewing admin pages
-            if (state.currentUser && state.currentUser.role === 'admin' && 
-                ['admin', 'menu_manager', 'sales_report'].includes(state.currentView)) {
-                setTimeout(() => {
-                    renderApp();
-                }, 100);
+        // --- PERSISTENCE LOGIC WITH ENCRYPTION ---
+        const loadInitialData = async () => {
+            try {
+                // Load from localStorage with decryption
+                const encryptedUsers = localStorage.getItem(STORAGE_KEY.USERS);
+                const encryptedMenu = localStorage.getItem(STORAGE_KEY.MENU);
+                const encryptedOrders = localStorage.getItem(STORAGE_KEY.ORDERS);
+                const encryptedSessions = localStorage.getItem(STORAGE_KEY.SESSIONS);
+                const encryptedSettings = localStorage.getItem(STORAGE_KEY.SETTINGS);
+                const encryptedCurrentUser = sessionStorage.getItem(STORAGE_KEY.CURRENT_USER);
+
+                state.users = encryptedUsers ? SecurityUtils.decrypt(encryptedUsers) || [] : [];
+                state.menu = encryptedMenu ? SecurityUtils.decrypt(encryptedMenu) || [] : [];
+                state.orders = encryptedOrders ? SecurityUtils.decrypt(encryptedOrders) || [] : [];
+                state.sessions = encryptedSessions ? SecurityUtils.decrypt(encryptedSessions) || [] : [];
+                
+                if (encryptedSettings) {
+                    const decryptedSettings = SecurityUtils.decrypt(encryptedSettings);
+                    if (decryptedSettings) {
+                        state.settings = { ...state.settings, ...decryptedSettings };
+                    }
+                }
+
+                if (encryptedCurrentUser) {
+                    state.currentUser = SecurityUtils.decrypt(encryptedCurrentUser);
+                }
+
+                // Load login security state
+                state.loginAttempts = parseInt(localStorage.getItem(STORAGE_KEY.LOGIN_ATTEMPTS)) || 0;
+                state.lockoutUntil = parseInt(localStorage.getItem(STORAGE_KEY.LOCKOUT_UNTIL)) || 0;
+
+                // Sync with Google Sheets if online
+                if (navigator.onLine) {
+                    await syncWithGoogleSheets();
+                }
+
+            } catch (error) {
+                console.error('Error loading initial data:', error);
             }
         };
 
-        // Helper function to refresh data across all tabs/views
-        const triggerDataRefresh = () => {
-            if (state.currentUser && state.currentUser.role === 'admin') {
-                // Reload data to ensure admin sees latest changes
-                loadInitialData();
-                renderApp();
+        const syncWithGoogleSheets = async () => {
+            if (state.isSyncing) return;
+            
+            state.isSyncing = true;
+            showSyncNotification(T('syncing_data'));
+            
+            try {
+                // Fetch latest data from Google Sheets
+                const [sheetUsers, sheetMenu, sheetOrders, sheetSessions] = await Promise.all([
+                    GoogleSheetsAPI.fetchData(SECURITY_CONFIG.SHEETS.USERS),
+                    GoogleSheetsAPI.fetchData(SECURITY_CONFIG.SHEETS.MENU),
+                    GoogleSheetsAPI.fetchData(SECURITY_CONFIG.SHEETS.ORDERS),
+                    GoogleSheetsAPI.fetchData(SECURITY_CONFIG.SHEETS.SESSIONS)
+                ]);
+
+                // Merge with local data (Google Sheets as source of truth)
+                if (sheetUsers.length > 0) state.users = sheetUsers;
+                if (sheetMenu.length > 0) state.menu = sheetMenu;
+                if (sheetOrders.length > 0) state.orders = sheetOrders;
+                if (sheetSessions.length > 0) state.sessions = sheetSessions;
+
+                // Save merged data back to localStorage
+                saveUsers();
+                saveMenu();
+                saveOrders();
+                saveSessions();
+
+                showSyncNotification(T('sync_complete'), 'success');
+                
+            } catch (error) {
+                console.error('Error syncing with Google Sheets:', error);
+                showSyncNotification(T('sync_failed'), 'error');
+            } finally {
+                state.isSyncing = false;
             }
+        };
+
+        const showSyncNotification = (message, type = 'info') => {
+            const notification = document.createElement('div');
+            notification.className = `fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 ${
+                type === 'success' ? 'bg-green-500 text-white' : 
+                type === 'error' ? 'bg-red-500 text-white' : 
+                'bg-blue-500 text-white'
+            }`;
+            notification.innerHTML = `
+                <div class="flex items-center">
+                    ${type === 'info' ? '<div class="loading-spinner mr-3" style="width: 20px; height: 20px;"></div>' : ''}
+                    <span>${message}</span>
+                </div>
+            `;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                if (document.body.contains(notification)) {
+                    document.body.removeChild(notification);
+                }
+            }, 3000);
         };
 
         const saveUsers = () => {
-            localStorage.setItem(STORAGE_KEY.USERS, JSON.stringify(state.users));
-            triggerDataRefresh();
+            const encrypted = SecurityUtils.encrypt(state.users);
+            localStorage.setItem(STORAGE_KEY.USERS, encrypted);
         };
+
         const saveMenu = () => {
-            localStorage.setItem(STORAGE_KEY.MENU, JSON.stringify(state.menu));
-            triggerDataRefresh();
+            const encrypted = SecurityUtils.encrypt(state.menu);
+            localStorage.setItem(STORAGE_KEY.MENU, encrypted);
         };
+
         const saveOrders = () => {
-            localStorage.setItem(STORAGE_KEY.ORDERS, JSON.stringify(state.orders));
-            triggerDataRefresh();
+            const encrypted = SecurityUtils.encrypt(state.orders);
+            localStorage.setItem(STORAGE_KEY.ORDERS, encrypted);
+            
+            // Sync to Google Sheets if online
+            if (navigator.onLine && state.orders.length > 0) {
+                const latestOrder = state.orders[state.orders.length - 1];
+                GoogleSheetsAPI.appendData(SECURITY_CONFIG.SHEETS.ORDERS, latestOrder);
+            }
         };
+
         const saveSessions = () => {
-            localStorage.setItem(STORAGE_KEY.SESSIONS, JSON.stringify(state.sessions));
-            triggerDataRefresh();
+            const encrypted = SecurityUtils.encrypt(state.sessions);
+            localStorage.setItem(STORAGE_KEY.SESSIONS, encrypted);
         };
+
         const saveSettings = () => {
-            localStorage.setItem(STORAGE_KEY.SETTINGS, JSON.stringify(state.settings));
+            const encrypted = SecurityUtils.encrypt(state.settings);
+            localStorage.setItem(STORAGE_KEY.SETTINGS, encrypted);
             applyTheme();
             renderApp();
         };
@@ -390,14 +587,98 @@
         const setCurrentUser = (user) => {
             state.currentUser = user;
             if (user) {
-                sessionStorage.setItem(STORAGE_KEY.CURRENT_USER, user.id);
+                const encrypted = SecurityUtils.encrypt(user);
+                sessionStorage.setItem(STORAGE_KEY.CURRENT_USER, encrypted);
             } else {
                 sessionStorage.removeItem(STORAGE_KEY.CURRENT_USER);
             }
         };
 
-        // --- UI & THEME LOGIC ---
+        // --- SECURITY FUNCTIONS ---
+        const checkAccountLock = () => {
+            const now = Date.now();
+            if (state.lockoutUntil > now) {
+                const remainingTime = Math.ceil((state.lockoutUntil - now) / 60000);
+                alert(`${T('account_locked')} ${remainingTime} minutes.`);
+                return true;
+            }
+            return false;
+        };
 
+        const recordFailedLogin = () => {
+            state.loginAttempts++;
+            localStorage.setItem(STORAGE_KEY.LOGIN_ATTEMPTS, state.loginAttempts.toString());
+
+            if (state.loginAttempts >= SECURITY_CONFIG.MAX_LOGIN_ATTEMPTS) {
+                state.lockoutUntil = Date.now() + SECURITY_CONFIG.LOCKOUT_TIME;
+                localStorage.setItem(STORAGE_KEY.LOCKOUT_UNTIL, state.lockoutUntil.toString());
+                alert(T('account_locked'));
+            }
+        };
+
+        const resetLoginAttempts = () => {
+            state.loginAttempts = 0;
+            state.lockoutUntil = 0;
+            localStorage.removeItem(STORAGE_KEY.LOGIN_ATTEMPTS);
+            localStorage.removeItem(STORAGE_KEY.LOCKOUT_UNTIL);
+        };
+
+        // --- AUTHENTICATION WITH 2FA ---
+        const login = async (username, password, verificationCode = null) => {
+            if (checkAccountLock()) {
+                return false;
+            }
+
+            const user = state.users.find(u => u.username === username);
+            if (!user) {
+                recordFailedLogin();
+                return false;
+            }
+
+            // Verify password (hashed comparison)
+            const hashedPassword = SecurityUtils.hashPassword(password);
+            if (user.password !== hashedPassword) {
+                recordFailedLogin();
+                return false;
+            }
+
+            // Check if 2FA is required
+            if (user.twoFactorEnabled && !verificationCode) {
+                return '2FA_REQUIRED';
+            }
+
+            // Verify 2FA code if enabled
+            if (user.twoFactorEnabled && verificationCode) {
+                if (!SecurityUtils.verify2FACode(user.twoFactorSecret, verificationCode)) {
+                    recordFailedLogin();
+                    return false;
+                }
+            }
+
+            // Successful login
+            resetLoginAttempts();
+            setCurrentUser(user);
+            
+            // Record session
+            const existingSession = state.sessions.find(s => s.userId === user.id && !s.logoutTime);
+            if (existingSession) {
+                existingSession.loginTime = getTimestamp();
+            } else {
+                state.sessions.push({
+                    id: generateId(),
+                    userId: user.id,
+                    username: user.username,
+                    loginTime: getTimestamp(),
+                    logoutTime: null,
+                    ordersHandled: 0,
+                });
+            }
+            saveSessions();
+            renderApp();
+            return true;
+        };
+
+        // --- UI & THEME LOGIC ---
         const applyTheme = () => {
             document.body.className = state.settings.theme;
         };
@@ -417,53 +698,213 @@
         };
 
         window.closeModal = (event) => {
-            // Check if event exists and if it's the overlay being clicked
             if (!event || event.target.id === 'modal-container-overlay') {
                 state.isModalOpen = false;
                 document.getElementById('modal-container').innerHTML = '';
             }
         };
-        // --- AUTHENTICATION & SESSION LOGIC ---
 
-        const login = (username, password) => {
-            const user = state.users.find(u => u.username === username && u.password === password);
-            if (user) {
-                setCurrentUser(user);
-                const existingSession = state.sessions.find(s => s.userId === user.id && !s.logoutTime);
-                if (existingSession) {
-                    existingSession.loginTime = getTimestamp();
-                } else {
-                    state.sessions.push({
-                        id: generateId(),
-                        userId: user.id,
-                        username: user.username,
-                        loginTime: getTimestamp(),
-                        logoutTime: null,
-                        ordersHandled: 0,
-                    });
-                }
-                saveSessions();
-                renderApp();
-                return true;
+        // --- PASSWORD TOGGLE FUNCTIONALITY ---
+        window.togglePassword = (inputId, button) => {
+            const input = document.getElementById(inputId);
+            if (input.type === 'password') {
+                input.type = 'text';
+                button.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg> ${T('hide_password')}`;
+            } else {
+                input.type = 'password';
+                button.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg> ${T('show_password')}`;
             }
-            return false;
         };
-        const logout = () => {
-            if (state.currentUser) {
-                const activeSession = state.sessions.find(s => s.userId === state.currentUser.id && !s.logoutTime);
-                if (activeSession) {
-                    activeSession.logoutTime = getTimestamp();
-                    saveSessions();
+
+        // --- LOGIN VIEW WITH SECURITY FEATURES ---
+        const renderLogin = () => {
+            const appDiv = document.getElementById('app');
+            appDiv.innerHTML = `
+                <div class="flex items-center justify-center min-h-screen">
+                    <div class="bg-card p-8 rounded-xl shadow-2xl w-full max-w-sm">
+                        <h2 class="text-3xl font-extrabold text-center mb-6 text-accent">${APP_NAME}</h2>
+                        <form id="login-form" class="space-y-4">
+                            <div>
+                                <label for="username" class="block text-sm font-medium mb-1">${T('username')}</label>
+                                <input type="text" id="username" name="username" class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 focus:ring-accent focus:border-accent" required value="admin">
+                            </div>
+                            <div class="password-input-container">
+                                <label for="password" class="block text-sm font-medium mb-1">${T('password')}</label>
+                                <input type="password" id="password" name="password" class="w-full p-3 pr-12 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 focus:ring-accent focus:border-accent" required value="admin123">
+                                <button type="button" onclick="togglePassword('password', this)" class="password-toggle">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                    </svg>
+                                    ${T('show_password')}
+                                </button>
+                            </div>
+                            <button type="submit" class="w-full py-3 mt-4 rounded-lg font-bold text-white bg-accent hover:bg-amber-600 transition shadow-lg">
+                                ${T('login')}
+                            </button>
+                            <p id="login-error" class="text-red-500 text-sm text-center mt-3 hidden">${T('invalid_credentials')}</p>
+                        </form>
+                        <div class="mt-6 border-t pt-4 text-center text-sm text-gray-500">
+                            <p class="font-semibold mb-1">Demo Credentials:</p>
+                            <p>Admin: admin / admin123</p>
+                            <p>Staff: staff / staff123</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('login-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const username = e.target.username.value;
+                const password = e.target.password.value;
+                const errorDisplay = document.getElementById('login-error');
+
+                const result = await login(username, password);
+                
+                if (result === true) {
+                    errorDisplay.classList.add('hidden');
+                } else if (result === '2FA_REQUIRED') {
+                    show2FAVerificationModal(username, password);
+                } else {
+                    errorDisplay.textContent = T('invalid_credentials');
+                    errorDisplay.classList.remove('hidden');
                 }
+            };
+        };
+
+        const show2FAVerificationModal = (username, password) => {
+            const html = `
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('two_factor_required')}</h2>
+                <p class="mb-4">${T('enter_verification_code')}</p>
+                <form id="2fa-form">
+                    <input type="text" id="verification-code" name="verificationCode" class="w-full p-3 border rounded-lg mb-4" placeholder="123456" maxlength="6" required>
+                    <p id="2fa-error" class="text-red-500 text-sm mb-4 hidden">${T('invalid_verification_code')}</p>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" onclick="closeModal(); renderLogin();" class="px-4 py-2 text-sm rounded-lg bg-gray-200">${T('cancel')}</button>
+                        <button type="submit" class="px-4 py-2 text-sm rounded-lg text-white bg-accent">${T('login')}</button>
+                    </div>
+                </form>
+            `;
+            showModal(html);
+
+            document.getElementById('2fa-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const verificationCode = e.target.verificationCode.value;
+                const errorDisplay = document.getElementById('2fa-error');
+
+                const result = await login(username, password, verificationCode);
+                
+                if (result === true) {
+                    closeModal();
+                } else {
+                    errorDisplay.textContent = T('invalid_verification_code');
+                    errorDisplay.classList.remove('hidden');
+                }
+            };
+        };
+
+        // --- ORIGINAL POS FUNCTIONALITY ---
+
+        // --- NAVIGATION BAR ---
+        const renderNav = () => {
+            const user = state.currentUser;
+            if (!user) return '';
+
+            const navItems = [
+                { view: 'pos', label: T('pos_dashboard'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-9-4h18"/></svg>` },
+                { view: 'sales_report', label: T('sales_report'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2v5h-5m0 0v-4a2 2 0 012-2h2a2 2 0 012 2v4m-5 4h6"/></svg>` },
+            ];
+
+            if (user.role === 'admin') {
+                navItems.push(
+                    { view: 'admin', label: T('admin_dashboard'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>` },
+                    { view: 'menu_manager', label: T('menu'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>` }
+                );
             }
-            setCurrentUser(null);
-            state.cart = [];
-            state.currentView = 'pos'; // Reset view
-            renderApp();
+
+            const navTabs = navItems.map(item => `
+                <button onclick="setStateView('${item.view}')" class="flex items-center px-3 py-2 text-sm rounded-lg font-semibold transition ${state.currentView === item.view ? 'bg-accent text-white shadow-md' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'}">
+                    ${item.icon} ${item.label}
+                </button>
+            `).join('');
+
+            return `
+                <nav class="p-4 bg-card shadow-md flex justify-between items-center sticky top-0 z-10">
+                    <div class="flex items-center space-x-4">
+                        <h1 class="text-2xl font-extrabold text-accent">${APP_NAME}</h1>
+                        <span class="text-sm font-medium text-gray-500 dark:text-gray-400 hidden sm:block">${T('welcome')} ${user.name} (${user.role.toUpperCase()})</span>
+                    </div>
+                    <div class="flex space-x-2">
+                        ${navTabs}
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <button onclick="syncWithGoogleSheets()" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition" title="Sync Data">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                        </button>
+                        <button onclick="renderSettingsModal()" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.82 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.82 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.82-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.82-3.31 2.37-2.37h.001z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        </button>
+                        <button onclick="logout()" class="flex items-center px-4 py-2 text-sm rounded-lg font-bold text-white bg-red-500 hover:bg-red-600 transition">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+                            ${T('logout')}
+                        </button>
+                    </div>
+                </nav>
+            `;
+        };
+
+        // --- STAFF POS DASHBOARD VIEW ---
+        const renderMenuSection = () => {
+            const filteredBySearch = state.menu.filter(item => 
+                item.name.toLowerCase().includes(state.searchTerm.toLowerCase())
+            );
+
+            const finalMenu = state.activeCategory === 'All Categories' ? filteredBySearch : filteredBySearch.filter(item => item.category === state.activeCategory);
+
+            const categoryButtons = ['All Categories', ...CATEGORIES].map(cat => `
+                <button onclick="changeCategory('${cat}')" class="px-4 py-2 text-sm rounded-lg font-semibold transition whitespace-nowrap ${state.activeCategory === cat ? 'bg-accent text-white shadow-md' : 'bg-card hover:bg-gray-200 dark:hover:bg-gray-700'}">
+                    ${cat === 'All Categories' ? T('all_categories') : cat}
+                </button>
+            `).join('');
+
+            const menuItems = finalMenu.map(item => `
+                <div onclick="addToCart('${item.id}')" class="bg-card rounded-xl shadow-md overflow-hidden cursor-pointer hover:shadow-lg transform hover:scale-[1.02] transition duration-200">
+                    <div class="item-image-container">
+                        <img src="${item.imageUrl || `https://placehold.co/400x400/ccc/000?text=${item.name.toUpperCase().split(' ').join('+')}`}" alt="${item.name}" class="w-full h-full object-cover">
+                    </div>
+                    <div class="p-3">
+                        <p class="font-bold text-lg truncate">${item.name}</p>
+                        <p class="text-xl font-extrabold text-accent">${formatPrimaryCurrency(item.price)}</p>
+                    </div>
+                </div>
+            `).join('');
+
+            return `
+                <div class="mb-4">
+                    <input type="text" oninput="updateSearch(this.value)" value="${state.searchTerm}" placeholder="Search for items..." class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-card focus:ring-accent focus:border-accent">
+                </div>
+                <div class="mb-4 flex space-x-3 overflow-x-auto pb-2 custom-scroll">
+                    ${categoryButtons}
+                </div>
+                <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                    ${menuItems.length > 0 ? menuItems : `<p class="p-4 text-gray-500">${T('no_search_results')}</p>`}
+                </div>
+            `;
+        };
+
+        window.updateSearch = (term) => {
+            state.searchTerm = term.trim();
+            renderStaffDashboard();
+        };
+
+        window.changeCategory = (category) => {
+            state.activeCategory = category;
+            renderStaffDashboard();
         };
 
         // --- CART LOGIC ---
-
         const updateCart = (newCart) => {
             state.cart = newCart;
             renderStaffDashboard();
@@ -568,392 +1009,12 @@
                 updateCart(state.cart);
             }
         };
-        // --- PAYMENT LOGIC ---
 
         const calculateTotal = () => {
-            // Total is always calculated in USD (base currency)
             const subtotal = state.cart.reduce((sum, item) => sum + (item.item.price * item.quantity), 0);
             const tax = subtotal * TAX_RATE;
             const total = subtotal + tax;
             return { subtotal, tax, total };
-        };
-
-        window.promptCashPayment = () => {
-            const { total } = calculateTotal();
-            const primaryCurrency = state.settings.primaryCurrency;
-            
-            // Convert total to primary currency for display and input
-            const totalPrimary = (primaryCurrency === 'KHR') ? usdToKhr(total) : total;
-            const currencyStep = (primaryCurrency === 'KHR') ? '100' : '0.01';
-            const currencyUnit = (primaryCurrency === 'KHR') ? 'KHR' : 'USD';
-
-            const promptAmount = `
-                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('cash')} ${T('payment')}</h2>
-                <p class="mb-4 text-lg"><strong>${T('total')}:</strong> ${formatPrimaryCurrency(total)} ${getSecondaryCurrencyDisplay(total)}</p>
-                <form id="cash-payment-form">
-                    <label for="amount-received" class="block text-sm font-medium mb-1">${T('enter_amount')} (${currencyUnit}):</label>
-                    <input type="number" step="${currencyStep}" id="amount-received" name="amount" class="w-full p-3 mb-4 text-2xl border-2 border-accent rounded-lg bg-gray-100 dark:bg-gray-700 focus:ring-accent focus:border-accent" required placeholder="${totalPrimary.toFixed(primaryCurrency === 'KHR' ? 0 : 2)}" min="${totalPrimary.toFixed(primaryCurrency === 'KHR' ? 0 : 2)}">
-
-                    <p id="change-display" class="mb-4 text-lg font-semibold text-red-500 hidden"></p>
-
-                    <div class="flex justify-end space-x-3">
-                        <button type="button" onclick="closeModal()" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-600">${T('cancel')}</button>
-                        <button type="submit" class="px-4 py-2 rounded-lg text-white bg-accent hover:bg-amber-600">${T('checkout')}</button>
-                    </div>
-                </form>
-            `;
-            showModal(promptAmount);
-
-            const form = document.getElementById('cash-payment-form');
-            const amountInput = document.getElementById('amount-received');
-            const changeDisplay = document.getElementById('change-display');
-            const submitButton = form.querySelector('button[type="submit"]');
-
-            // Initial amount set
-            amountInput.value = totalPrimary.toFixed(primaryCurrency === 'KHR' ? 0 : 2);
-
-            const calculateChange = () => {
-                const receivedPrimary = parseFloat(amountInput.value) || 0;
-                const changePrimary = receivedPrimary - totalPrimary;
-                // Convert the change back to USD for formatting/storage consistency
-                const changeUSD = (primaryCurrency === 'KHR') ? khrToUsd(changePrimary) : changePrimary;
-                
-                if (receivedPrimary >= totalPrimary) {
-                    const secondaryDisplay = getSecondaryCurrencyDisplay(changeUSD);
-                    changeDisplay.textContent = `${T('change')} ${formatPrimaryCurrency(changeUSD)} ${secondaryDisplay}`;
-                    changeDisplay.classList.remove('text-red-500', 'hidden');
-                    changeDisplay.classList.add('text-green-500');
-                    submitButton.disabled = false;
-                } else {
-                    const requiredPrimary = totalPrimary - receivedPrimary;
-                    const requiredUSD = (primaryCurrency === 'KHR') ? khrToUsd(requiredPrimary) : requiredPrimary;
-                    
-                    changeDisplay.textContent = `Need ${formatPrimaryCurrency(requiredUSD)} more.`;
-                    changeDisplay.classList.remove('text-green-500', 'hidden');
-                    changeDisplay.classList.add('text-red-500');
-                    submitButton.disabled = true;
-                }
-            };
-            amountInput.addEventListener('input', calculateChange);
-            amountInput.focus();
-            calculateChange(); // Initial calculation
-
-            form.onsubmit = (e) => {
-                e.preventDefault();
-                const amountReceivedPrimary = parseFloat(amountInput.value);
-                if (amountReceivedPrimary < totalPrimary) {
-                    alert(T('amount_required'));
-                    return;
-                }
-                
-                // Convert received amount to USD for consistent storage
-                const amountReceivedUSD = (primaryCurrency === 'KHR') ? khrToUsd(amountReceivedPrimary) : amountReceivedPrimary;
-
-                processPayment('Cash', amountReceivedUSD);
-            };
-        };
-
-        window.promptQRcodePayment = () => {
-            const { total } = calculateTotal();
-            const qrModal = `
-                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('qrcode')} ${T('payment')}</h2>
-                <div class="text-center p-4">
-                    <p class="mb-4 text-lg"><strong>${T('total')}:</strong> ${formatPrimaryCurrency(total)} ${getSecondaryCurrencyDisplay(total)}</p>
-                    <img src="${state.settings.qrCodeImageUrl || 'https://placehold.co/200x200/000/fff?text=DEFAULT+QR'}" 
-                        alt="QR Code Payment" class="mx-auto my-4 rounded-lg border-2 border-gray-300 dark:border-gray-500">
-                    <p class="text-sm text-gray-500">(${T('qrcode')} ${T('payment')} ${T('demo')})</p>
-                </div>
-                <div class="flex justify-end space-x-3 mt-4">
-                    <button type="button" onclick="closeModal()" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-600">${T('cancel')}</button>
-                    <button type="button" onclick="processPayment('QR Code', ${total})" class="px-4 py-2 rounded-lg text-white bg-amber-700 hover:bg-amber-800">${T('checkout')}</button>
-                </div>
-            `;
-            showModal(qrModal);
-        };
-
-        const processPayment = (type, amountReceivedUSD) => {
-            const { subtotal, tax, total } = calculateTotal();
-            // All amounts are in USD for internal storage
-            const changeUSD = amountReceivedUSD - total;
-
-            const newOrder = {
-                id: generateId(),
-                timestamp: getTimestamp(),
-                staffId: state.currentUser.id,
-                items: state.cart.map(item => ({
-                    name: item.item.name,
-                    price: item.item.price, // USD
-                    qty: item.quantity,
-                    sugar: item.sugar,
-                    note: item.note,
-                })),
-                subtotal: subtotal, // USD
-                tax: tax, // USD
-                total: total, // USD
-                paymentType: type,
-                amountReceived: amountReceivedUSD, // USD equivalent of what customer paid
-                change: changeUSD, // USD equivalent of change given
-                transactionCurrency: state.settings.primaryCurrency, // <-- NEW: Store the currency used for the payment
-            };
-            // 1. Save order
-            state.orders.push(newOrder);
-            saveOrders();
-            // 2. Update session counter
-            const activeSession = state.sessions.find(s => s.userId === state.currentUser.id && !s.logoutTime);
-            if (activeSession) {
-                activeSession.ordersHandled = (activeSession.ordersHandled || 0) + 1;
-                saveSessions();
-            }
-
-            // 3. Print receipt
-            closeModal();
-            renderReceipt(newOrder);
-
-            // 4. Clear cart
-            updateCart([]);
-        };
-        // --- RECEIPT PRINTING ---
-
-        const renderReceipt = (order) => {
-            const { total, subtotal, tax, paymentType, amountReceived, change, transactionCurrency } = order;
-            const receiptDate = new Date(order.timestamp).toLocaleString(getLang() === 'km' ? 'km-KH' : 'en-US');
-
-            // Set formatters based on the currency used for this specific transaction
-            const totalPrimary = (transactionCurrency === 'KHR') ? usdToKhr(total) : total;
-            const totalSecondary = (transactionCurrency === 'KHR') ? total : usdToKhr(total);
-            const primaryFormatter = (transactionCurrency === 'KHR') ? formatKHR : formatUSD;
-            const secondaryFormatter = (transactionCurrency === 'KHR') ? formatUSD : formatKHR;
-            
-            // Cash details for receipt
-            let cashDetailsHtml = '';
-            if (paymentType === 'Cash') {
-                const receivedPrimary = (transactionCurrency === 'KHR') ? usdToKhr(amountReceived) : amountReceived;
-                const changePrimary = (transactionCurrency === 'KHR') ? usdToKhr(change) : change;
-                
-                cashDetailsHtml = `
-                    <div class="flex justify-between"><span>${T('amount_received')}:</span><span>${primaryFormatter(receivedPrimary)}</span></div>
-                    <div class="flex justify-between"><span>${T('change_due')}:</span><span>${primaryFormatter(changePrimary)}</span></div>
-                `;
-            }
-
-
-            const itemRows = order.items.map(item => {
-                const customization = [];
-                if (item.sugar !== 'N/A') customization.push(`${T('sugar')}: ${item.sugar}`);
-                if (item.note) customization.push(`${T('note')}: ${item.note}`);
-
-                const detailLine = customization.length > 0 ? `<div class="text-[8px] italic ml-2">(${customization.join(', ')})</div>` : '';
-                
-                // Item prices are always stored in USD. Display primary currency on receipt
-                const itemPricePrimary = (transactionCurrency === 'KHR') ? usdToKhr(item.price) : item.price;
-                const itemTotalPrimary = (transactionCurrency === 'KHR') ? usdToKhr(item.price * item.qty) : (item.price * item.qty);
-
-
-                return `
-                    <div class="flex justify-between">
-                        <span class="w-1/2">${item.qty} x ${item.name}</span>
-                        <span class="w-1/4 text-right">${primaryFormatter(itemPricePrimary)}</span>
-                        <span class="w-1/4 text-right">${primaryFormatter(itemTotalPrimary)}</span>
-                    </div>
-                    ${detailLine}
-                `;
-            }).join('');
-            const receiptHtml = `
-                <div id="receipt-modal" class="fixed inset-0 z-50 hidden justify-center items-center">
-                    <div class="receipt-content bg-white shadow-xl p-4 text-black text-center ${state.settings.receiptWidth === '80mm' ? 'w-80mm' : ''}">
-                        ${state.settings.receiptLogoUrl 
-                            ? `<img src="${state.settings.receiptLogoUrl}" alt="Logo" class="w-12 h-12 mx-auto mb-2 object-contain">` 
-                            : `<h3 class="text-lg font-bold mb-1">${APP_NAME}</h3>` // Fallback to text if no logo URL
-                        }
-                        <p class="text-[8px] mb-2">123 Example St, Phnom Penh, Cambodia</p>
-                        <hr class="border-t border-dashed border-black my-2">
-                        <div class="flex justify-between text-[9px]">
-                            <span>${T('date')}: ${receiptDate}</span>
-                            <span>Order ID: ${order.id}</span>
-                        </div>
-                        <hr class="border-t border-dashed border-black my-1">
-                        <div class="flex justify-between text-[9px] font-bold mt-2">
-                            <span class="w-1/2">${T('item_details')}</span>
-                            <span class="w-1/4 text-right">${T('price')}</span>
-                            <span class="w-1/4 text-right">${T('amount')}</span>
-                        </div>
-                        <hr class="border-t border-dashed border-black my-1">
-                        <div class="text-[9px] space-y-1 my-1">
-                            ${itemRows}
-                        </div>
-                        <hr class="border-t border-dashed border-black my-2">
-                        <div class="text-[10px] space-y-1">
-                            <div class="flex justify-between"><span>${T('subtotal')}</span><span>${primaryFormatter(totalPrimary)}</span></div>
-                            <div class="flex justify-between"><span>${T('tax')} (0%)</span><span>${primaryFormatter(0)}</span></div>
-                            <div class="flex justify-between font-bold text-lg"><span>${T('total')} ${transactionCurrency}</span><span>${primaryFormatter(totalPrimary)}</span></div>
-                            <div class="flex justify-between font-bold text-lg"><span>Total ${transactionCurrency === 'USD' ? 'KHR' : 'USD'}</span><span>${secondaryFormatter(totalSecondary)}</span></div>
-                        </div>
-                        <hr class="border-t border-dashed border-black my-2">
-                        <div class="text-[9px] space-y-1">
-                            <div class="flex justify-between"><span>${T('payment')}:</span><span>${paymentType}</span></div>
-                            ${cashDetailsHtml}
-                        </div>
-                        <hr class="border-t border-dashed border-black my-2">
-                        <p class="text-sm font-bold mt-2">${T('thank_you')}</p>
-                        <div class="text-xs mt-4 no-print">
-                            <button onclick="window.print()" class="bg-accent text-white px-3 py-1 rounded-md">Print Receipt</button>
-                            <button onclick="document.getElementById('receipt-modal').style.display='none'" class="bg-gray-500 text-white px-3 py-1 rounded-md ml-2">${T('close')}</button>
-                        </div>
-                    </div>
-                </div>
-            `;
-            document.getElementById('modal-container').innerHTML = receiptHtml;
-            document.getElementById('receipt-modal').style.display = 'flex';
-            window.print();
-            // Auto close after print (wait for print dialog to appear/close)
-            setTimeout(() => {
-                const modal = document.getElementById('receipt-modal');
-                if(modal) modal.style.display = 'none';
-                document.getElementById('modal-container').innerHTML = '';
-            }, 500); // 0.5 seconds delay
-        };
-
-
-        // --- LOGIN VIEW ---
-
-        const renderLogin = () => {
-            const appDiv = document.getElementById('app');
-            appDiv.innerHTML = `
-                <div class="flex items-center justify-center min-h-screen">
-                    <div class="bg-card p-8 rounded-xl shadow-2xl w-full max-w-sm">
-                        <h2 class="text-3xl font-extrabold text-center mb-6 text-accent">${APP_NAME}</h2>
-                        <form id="login-form" class="space-y-4">
-                            <div>
-                                <label for="username" class="block text-sm font-medium mb-1">${T('username')}</label>
-                                <input type="text" id="username" name="username" class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 focus:ring-accent focus:border-accent" required value="admin">
-                            </div>
-                            <div>
-                                <label for="password" class="block text-sm font-medium mb-1">${T('password')}</label>
-                                <input type="password" id="password" name="password" class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 focus:ring-accent focus:border-accent" required value="admin123">
-                            </div>
-                            <button type="submit" class="w-full py-3 mt-4 rounded-lg font-bold text-white bg-accent hover:bg-amber-600 transition shadow-lg">
-                                ${T('login')}
-                            </button>
-                            <p id="login-error" class="text-red-500 text-sm text-center mt-3 hidden">${T('invalid_credentials')}</p>
-                        </form>
-                        <div class="mt-6 border-t pt-4 text-center text-sm text-gray-500">
-                            <p class="font-semibold mb-1">Demo Credentials:</p>
-                            <p>Admin: admin / admin123</p>
-                            <p>Staff: staff / staff123</p>
-                        </div>
-                    </div>
-                </div>
-            `;
-            document.getElementById('login-form').onsubmit = (e) => {
-                e.preventDefault();
-                const username = e.target.username.value;
-                const password = e.target.password.value;
-                const errorDisplay = document.getElementById('login-error');
-
-                if (login(username, password)) {
-                    errorDisplay.classList.add('hidden');
-                } else {
-                    errorDisplay.classList.remove('hidden');
-                }
-            };
-        };
-
-        // --- NAVIGATION BAR ---
-
-        const renderNav = () => {
-            const user = state.currentUser;
-            if (!user) return '';
-
-            const navItems = [
-                { view: 'pos', label: T('pos_dashboard'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-9-4h18"/></svg>` },
-                { view: 'sales_report', label: T('sales_report'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2v5h-5m0 0v-4a2 2 0 012-2h2a2 2 0 012 2v4m-5 4h6"/></svg>` },
-            ];
-
-            if (user.role === 'admin') {
-                navItems.push(
-                    { view: 'admin', label: T('admin_dashboard'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>` },
-                    { view: 'menu_manager', label: T('menu'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>` }
-                );
-            }
-
-            const navTabs = navItems.map(item => `
-                <button onclick="setStateView('${item.view}')" class="flex items-center px-3 py-2 text-sm rounded-lg font-semibold transition ${state.currentView === item.view ? 'bg-accent text-white shadow-md' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'}">
-                    ${item.icon} ${item.label}
-                </button>
-            `).join('');
-
-            return `
-                <nav class="p-4 bg-card shadow-md flex justify-between items-center sticky top-0 z-10">
-                    <div class="flex items-center space-x-4">
-                        <h1 class="text-2xl font-extrabold text-accent">${APP_NAME}</h1>
-                        <span class="text-sm font-medium text-gray-500 dark:text-gray-400 hidden sm:block">${T('welcome')} ${user.name} (${user.role.toUpperCase()})</span>
-                    </div>
-                    <div class="flex space-x-2">
-                        ${navTabs}
-                    </div>
-                    <div class="flex items-center space-x-3">
-                        <button onclick="renderSettingsModal()" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.82 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.82 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.82-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.82-3.31 2.37-2.37h.001z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                        </button>
-                        <button onclick="logout()" class="flex items-center px-4 py-2 text-sm rounded-lg font-bold text-white bg-red-500 hover:bg-red-600 transition">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
-                            ${T('logout')}
-                        </button>
-                    </div>
-                </nav>
-            `;
-        };
-
-        // --- STAFF POS DASHBOARD VIEW ---
-
-        const renderMenuSection = () => {
-            // 1. Filter by search term
-            const filteredBySearch = state.menu.filter(item => 
-                item.name.toLowerCase().includes(state.searchTerm.toLowerCase())
-            );
-
-            // 2. Filter by category
-            const finalMenu = state.activeCategory === 'All Categories' ? filteredBySearch : filteredBySearch.filter(item => item.category === state.activeCategory);
-
-            const categoryButtons = ['All Categories', ...CATEGORIES].map(cat => `
-                <button onclick="changeCategory('${cat}')" class="px-4 py-2 text-sm rounded-lg font-semibold transition whitespace-nowrap ${state.activeCategory === cat ? 'bg-accent text-white shadow-md' : 'bg-card hover:bg-gray-200 dark:hover:bg-gray-700'}">
-                    ${cat === 'All Categories' ? T('all_categories') : cat}
-                </button>
-            `).join('');
-
-            const menuItems = finalMenu.map(item => `
-                <div onclick="addToCart('${item.id}')" class="bg-card rounded-xl shadow-md overflow-hidden cursor-pointer hover:shadow-lg transform hover:scale-[1.02] transition duration-200">
-                    <div class="item-image-container">
-                        <img src="${item.imageUrl || `https://placehold.co/400x400/ccc/000?text=${item.name.toUpperCase().split(' ').join('+')}`}" alt="${item.name}" class="w-full h-full object-cover">
-                    </div>
-                    <div class="p-3">
-                        <p class="font-bold text-lg truncate">${item.name}</p>
-                        <p class="text-xl font-extrabold text-accent">${formatPrimaryCurrency(item.price)}</p>
-                    </div>
-                </div>
-            `).join('');
-
-            return `
-                <div class="mb-4">
-                    <input type="text" oninput="updateSearch(this.value)" value="${state.searchTerm}" placeholder="Search for items..." class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-card focus:ring-accent focus:border-accent">
-                </div>
-                <div class="mb-4 flex space-x-3 overflow-x-auto pb-2 custom-scroll">
-                    ${categoryButtons}
-                </div>
-                <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                    ${menuItems.length > 0 ? menuItems : `<p class="p-4 text-gray-500">${T('no_search_results')}</p>`}
-                </div>
-            `;
-        };
-
-        window.updateSearch = (term) => {
-            state.searchTerm = term.trim();
-            renderStaffDashboard();
-        };
-
-        window.changeCategory = (category) => {
-            state.activeCategory = category;
-            renderStaffDashboard();
         };
 
         const renderCartSection = () => {
@@ -1028,8 +1089,229 @@
             `;
         };
 
-        // --- ADMIN DASHBOARD VIEW ---
+        // --- PAYMENT LOGIC ---
+        window.promptCashPayment = () => {
+            const { total } = calculateTotal();
+            const primaryCurrency = state.settings.primaryCurrency;
+            
+            const totalPrimary = (primaryCurrency === 'KHR') ? usdToKhr(total) : total;
+            const currencyStep = (primaryCurrency === 'KHR') ? '100' : '0.01';
+            const currencyUnit = (primaryCurrency === 'KHR') ? 'KHR' : 'USD';
 
+            const promptAmount = `
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('cash')} ${T('payment')}</h2>
+                <p class="mb-4 text-lg"><strong>${T('total')}:</strong> ${formatPrimaryCurrency(total)} ${getSecondaryCurrencyDisplay(total)}</p>
+                <form id="cash-payment-form">
+                    <label for="amount-received" class="block text-sm font-medium mb-1">${T('enter_amount')} (${currencyUnit}):</label>
+                    <input type="number" step="${currencyStep}" id="amount-received" name="amount" class="w-full p-3 mb-4 text-2xl border-2 border-accent rounded-lg bg-gray-100 dark:bg-gray-700 focus:ring-accent focus:border-accent" required placeholder="${totalPrimary.toFixed(primaryCurrency === 'KHR' ? 0 : 2)}" min="${totalPrimary.toFixed(primaryCurrency === 'KHR' ? 0 : 2)}">
+
+                    <p id="change-display" class="mb-4 text-lg font-semibold text-red-500 hidden"></p>
+
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" onclick="closeModal()" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-600">${T('cancel')}</button>
+                        <button type="submit" class="px-4 py-2 rounded-lg text-white bg-accent hover:bg-amber-600">${T('checkout')}</button>
+                    </div>
+                </form>
+            `;
+            showModal(promptAmount);
+
+            const form = document.getElementById('cash-payment-form');
+            const amountInput = document.getElementById('amount-received');
+            const changeDisplay = document.getElementById('change-display');
+            const submitButton = form.querySelector('button[type="submit"]');
+
+            amountInput.value = totalPrimary.toFixed(primaryCurrency === 'KHR' ? 0 : 2);
+
+            const calculateChange = () => {
+                const receivedPrimary = parseFloat(amountInput.value) || 0;
+                const changePrimary = receivedPrimary - totalPrimary;
+                const changeUSD = (primaryCurrency === 'KHR') ? khrToUsd(changePrimary) : changePrimary;
+                
+                if (receivedPrimary >= totalPrimary) {
+                    const secondaryDisplay = getSecondaryCurrencyDisplay(changeUSD);
+                    changeDisplay.textContent = `${T('change')} ${formatPrimaryCurrency(changeUSD)} ${secondaryDisplay}`;
+                    changeDisplay.classList.remove('text-red-500', 'hidden');
+                    changeDisplay.classList.add('text-green-500');
+                    submitButton.disabled = false;
+                } else {
+                    const requiredPrimary = totalPrimary - receivedPrimary;
+                    const requiredUSD = (primaryCurrency === 'KHR') ? khrToUsd(requiredPrimary) : requiredPrimary;
+                    
+                    changeDisplay.textContent = `Need ${formatPrimaryCurrency(requiredUSD)} more.`;
+                    changeDisplay.classList.remove('text-green-500', 'hidden');
+                    changeDisplay.classList.add('text-red-500');
+                    submitButton.disabled = true;
+                }
+            };
+            amountInput.addEventListener('input', calculateChange);
+            amountInput.focus();
+            calculateChange();
+
+            form.onsubmit = (e) => {
+                e.preventDefault();
+                const amountReceivedPrimary = parseFloat(amountInput.value);
+                if (amountReceivedPrimary < totalPrimary) {
+                    alert(T('amount_required'));
+                    return;
+                }
+                
+                const amountReceivedUSD = (primaryCurrency === 'KHR') ? khrToUsd(amountReceivedPrimary) : amountReceivedPrimary;
+                processPayment('Cash', amountReceivedUSD);
+            };
+        };
+
+        window.promptQRcodePayment = () => {
+            const { total } = calculateTotal();
+            const qrModal = `
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('qrcode')} ${T('payment')}</h2>
+                <div class="text-center p-4">
+                    <p class="mb-4 text-lg"><strong>${T('total')}:</strong> ${formatPrimaryCurrency(total)} ${getSecondaryCurrencyDisplay(total)}</p>
+                    <img src="${state.settings.qrCodeImageUrl || 'https://placehold.co/200x200/000/fff?text=DEFAULT+QR'}" 
+                        alt="QR Code Payment" class="mx-auto my-4 rounded-lg border-2 border-gray-300 dark:border-gray-500">
+                    <p class="text-sm text-gray-500">(${T('qrcode')} ${T('payment')} ${T('demo')})</p>
+                </div>
+                <div class="flex justify-end space-x-3 mt-4">
+                    <button type="button" onclick="closeModal()" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-600">${T('cancel')}</button>
+                    <button type="button" onclick="processPayment('QR Code', ${total})" class="px-4 py-2 rounded-lg text-white bg-amber-700 hover:bg-amber-800">${T('checkout')}</button>
+                </div>
+            `;
+            showModal(qrModal);
+        };
+
+        const processPayment = (type, amountReceivedUSD) => {
+            const { subtotal, tax, total } = calculateTotal();
+            const changeUSD = amountReceivedUSD - total;
+
+            const newOrder = {
+                id: generateId(),
+                timestamp: getTimestamp(),
+                staffId: state.currentUser.id,
+                items: state.cart.map(item => ({
+                    name: item.item.name,
+                    price: item.item.price,
+                    qty: item.quantity,
+                    sugar: item.sugar,
+                    note: item.note,
+                })),
+                subtotal: subtotal,
+                tax: tax,
+                total: total,
+                paymentType: type,
+                amountReceived: amountReceivedUSD,
+                change: changeUSD,
+                transactionCurrency: state.settings.primaryCurrency,
+            };
+
+            state.orders.push(newOrder);
+            saveOrders();
+
+            const activeSession = state.sessions.find(s => s.userId === state.currentUser.id && !s.logoutTime);
+            if (activeSession) {
+                activeSession.ordersHandled = (activeSession.ordersHandled || 0) + 1;
+                saveSessions();
+            }
+
+            closeModal();
+            renderReceipt(newOrder);
+            updateCart([]);
+        };
+
+        // --- RECEIPT PRINTING ---
+        const renderReceipt = (order) => {
+            const { total, subtotal, tax, paymentType, amountReceived, change, transactionCurrency } = order;
+            const receiptDate = new Date(order.timestamp).toLocaleString(getLang() === 'km' ? 'km-KH' : 'en-US');
+
+            const totalPrimary = (transactionCurrency === 'KHR') ? usdToKhr(total) : total;
+            const totalSecondary = (transactionCurrency === 'KHR') ? total : usdToKhr(total);
+            const primaryFormatter = (transactionCurrency === 'KHR') ? formatKHR : formatUSD;
+            const secondaryFormatter = (transactionCurrency === 'KHR') ? formatUSD : formatKHR;
+            
+            let cashDetailsHtml = '';
+            if (paymentType === 'Cash') {
+                const receivedPrimary = (transactionCurrency === 'KHR') ? usdToKhr(amountReceived) : amountReceived;
+                const changePrimary = (transactionCurrency === 'KHR') ? usdToKhr(change) : change;
+                
+                cashDetailsHtml = `
+                    <div class="flex justify-between"><span>${T('amount_received')}:</span><span>${primaryFormatter(receivedPrimary)}</span></div>
+                    <div class="flex justify-between"><span>${T('change_due')}:</span><span>${primaryFormatter(changePrimary)}</span></div>
+                `;
+            }
+
+            const itemRows = order.items.map(item => {
+                const customization = [];
+                if (item.sugar !== 'N/A') customization.push(`${T('sugar')}: ${item.sugar}`);
+                if (item.note) customization.push(`${T('note')}: ${item.note}`);
+
+                const detailLine = customization.length > 0 ? `<div class="text-[8px] italic ml-2">(${customization.join(', ')})</div>` : '';
+                
+                const itemPricePrimary = (transactionCurrency === 'KHR') ? usdToKhr(item.price) : item.price;
+                const itemTotalPrimary = (transactionCurrency === 'KHR') ? usdToKhr(item.price * item.qty) : (item.price * item.qty);
+
+                return `
+                    <div class="flex justify-between">
+                        <span class="w-1/2">${item.qty} x ${item.name}</span>
+                        <span class="w-1/4 text-right">${primaryFormatter(itemPricePrimary)}</span>
+                        <span class="w-1/4 text-right">${primaryFormatter(itemTotalPrimary)}</span>
+                    </div>
+                    ${detailLine}
+                `;
+            }).join('');
+
+            const receiptHtml = `
+                <div id="receipt-modal" class="fixed inset-0 z-50 hidden justify-center items-center">
+                    <div class="receipt-content bg-white shadow-xl p-4 text-black text-center ${state.settings.receiptWidth === '80mm' ? 'w-80mm' : ''}">
+                        ${state.settings.receiptLogoUrl 
+                            ? `<img src="${state.settings.receiptLogoUrl}" alt="Logo" class="w-12 h-12 mx-auto mb-2 object-contain">` 
+                            : `<h3 class="text-lg font-bold mb-1">${APP_NAME}</h3>`
+                        }
+                        <p class="text-[8px] mb-2">123 Example St, Phnom Penh, Cambodia</p>
+                        <hr class="border-t border-dashed border-black my-2">
+                        <div class="flex justify-between text-[9px]">
+                            <span>${T('date')}: ${receiptDate}</span>
+                            <span>Order ID: ${order.id}</span>
+                        </div>
+                        <hr class="border-t border-dashed border-black my-1">
+                        <div class="flex justify-between text-[9px] font-bold mt-2">
+                            <span class="w-1/2">${T('item_details')}</span>
+                            <span class="w-1/4 text-right">${T('price')}</span>
+                            <span class="w-1/4 text-right">${T('amount')}</span>
+                        </div>
+                        <hr class="border-t border-dashed border-black my-1">
+                        <div class="text-[9px] space-y-1 my-1">
+                            ${itemRows}
+                        </div>
+                        <hr class="border-t border-dashed border-black my-2">
+                        <div class="text-[10px] space-y-1">
+                            <div class="flex justify-between"><span>${T('subtotal')}</span><span>${primaryFormatter(totalPrimary)}</span></div>
+                            <div class="flex justify-between"><span>${T('tax')} (0%)</span><span>${primaryFormatter(0)}</span></div>
+                            <div class="flex justify-between font-bold text-lg"><span>${T('total')} ${transactionCurrency}</span><span>${primaryFormatter(totalPrimary)}</span></div>
+                            <div class="flex justify-between font-bold text-lg"><span>Total ${transactionCurrency === 'USD' ? 'KHR' : 'USD'}</span><span>${secondaryFormatter(totalSecondary)}</span></div>
+                        </div>
+                        <hr class="border-t border-dashed border-black my-2">
+                        <div class="text-[9px] space-y-1">
+                            <div class="flex justify-between"><span>${T('payment')}:</span><span>${paymentType}</span></div>
+                            ${cashDetailsHtml}
+                        </div>
+                        <hr class="border-t border-dashed border-black my-2">
+                        <p class="text-sm font-bold mt-2">${T('thank_you')}</p>
+                        <div class="text-xs mt-4 no-print">
+                            <button onclick="window.print()" class="bg-accent text-white px-3 py-1 rounded-md">Print Receipt</button>
+                            <button onclick="document.getElementById('receipt-modal').style.display='none'" class="bg-gray-500 text-white px-3 py-1 rounded-md ml-2">${T('close')}</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('modal-container').innerHTML = receiptHtml;
+            document.getElementById('receipt-modal').style.display = 'flex';
+            window.print();
+            setTimeout(() => {
+                const modal = document.getElementById('receipt-modal');
+                if(modal) modal.style.display = 'none';
+                document.getElementById('modal-container').innerHTML = '';
+            }, 500);
+        };
+
+        // --- ADMIN DASHBOARD VIEW ---
         const calculateSalesSummary = (orders) => {
             const summary = {
                 totalRevenue: 0,
@@ -1041,7 +1323,6 @@
             };
 
             orders.forEach(order => {
-                // All revenues are calculated and stored in USD (base currency)
                 summary.totalRevenue += order.total;
                 if (order.paymentType === 'Cash') {
                     summary.cashRevenue += order.total;
@@ -1059,13 +1340,13 @@
                 });
             });
 
-            // Convert map to array for display
             summary.itemSalesArray = Object.entries(summary.itemSalesMap)
                 .map(([name, data]) => ({ name, qty: data.qty, revenue: data.revenue }))
                 .sort((a, b) => b.revenue - a.revenue);
 
             return summary;
         };
+
         const renderSalesSummary = (summary) => {
             return `
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -1092,7 +1373,6 @@
         };
 
         const renderAdminDashboard = () => {
-            // Summary for all time
             const allTimeSummary = calculateSalesSummary(state.orders);
 
             document.getElementById('content').innerHTML = `
@@ -1104,7 +1384,6 @@
 
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         ${renderUsersManagement()}
-                        
                         ${renderSessionsActivity()}
 
                         <div class="bg-card p-4 rounded-xl shadow-lg h-96">
@@ -1148,7 +1427,6 @@
             `;
         };
 
-        // --- ADMIN PASSWORD RESET (Manual Input) ---
         window.promptResetPassword = (userId) => {
             const user = state.users.find(u => u.id === userId);
             if (!user) return;
@@ -1190,14 +1468,13 @@
 
                 const targetUser = state.users.find(u => u.id === userId);
                 if (targetUser) {
-                    targetUser.password = newPass;
+                    targetUser.password = SecurityUtils.hashPassword(newPass);
                     saveUsers();
                     closeModal();
                     alert(`${T('reset_success')} ${T('new_password')} ${newPass}`);
                 }
             };
         };
-
 
         const renderSessionsActivity = () => {
             const sessionsList = state.sessions.slice().reverse().map(session => {
@@ -1233,8 +1510,7 @@
             `;
         };
 
-        // --- MENU MANAGER VIEW (ADMIN ONLY) ---
-
+        // --- MENU MANAGER VIEW ---
         const renderMenuManager = () => {
             const menuList = state.menu.map(item => `
                 <li class="bg-gray-50 dark:bg-gray-700 p-3 rounded-lg flex items-center justify-between">
@@ -1356,128 +1632,7 @@
             }
         };
 
-
         // --- SALES REPORT VIEW ---
-
-        const updateSalesFilter = (value) => {
-            if (value.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                state.salesFilterDate = value;
-            } else if (['today', 'this_month', 'this_year', 'all_time'].includes(value)) {
-                state.salesFilterDate = value;
-            }
-            renderStaffSalesReportView();
-        };
-
-        // Reset data for the selected filter period
-        const resetSalesReport = () => {
-            const filter = state.salesFilterDate;
-            let ordersToDelete = [];
-            let filterString = '';
-
-            if (filter === 'all_time') {
-                ordersToDelete = state.orders;
-                filterString = T('all_time');
-            } else if (filter === 'this_month') {
-                const today = new Date();
-                const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().substring(0, 7);
-                ordersToDelete = state.orders.filter(order => order.timestamp.startsWith(monthStart));
-                filterString = T('this_month');
-            } else if (filter === 'this_year') {
-                const yearStart = new Date().getFullYear().toString();
-                ordersToDelete = state.orders.filter(order => order.timestamp.startsWith(yearStart));
-                filterString = T('this_year');
-            } else if (filter === formatDateForInput()) {
-                ordersToDelete = getOrdersByDate(filter);
-                filterString = T('today');
-            } else if (filter.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                ordersToDelete = getOrdersByDate(filter);
-                filterString = filter;
-            } else {
-                alert("Invalid filter selected for reset.");
-                return;
-            }
-            
-            if (ordersToDelete.length === 0) {
-                alert(`No sales data found for ${filterString} to reset.`);
-                return;
-            }
-
-            if (confirm(`${T('confirm_reset_today').replace('selected date', filterString)}`)) {
-                const orderIdsToDelete = ordersToDelete.map(o => o.id);
-                state.orders = state.orders.filter(o => !orderIdsToDelete.includes(o.id));
-                saveOrders();
-                alert(T('reset_success_report').replace('selected date', filterString));
-                renderStaffSalesReportView();
-            }
-        };
-
-        window.renderOrderDetailsModal = (orderId) => {
-            const order = state.orders.find(o => o.id === orderId);
-            if (!order) return;
-            
-            const { total, paymentType, amountReceived, change, transactionCurrency } = order;
-            const receiptDate = new Date(order.timestamp).toLocaleString(getLang() === 'km' ? 'km-KH' : 'en-US');
-
-            const totalPrimary = (transactionCurrency === 'KHR') ? usdToKhr(total) : total;
-            const totalSecondary = (transactionCurrency === 'KHR') ? total : usdToKhr(total);
-            const primaryFormatter = (transactionCurrency === 'KHR') ? formatKHR : formatUSD;
-            const secondaryFormatter = (transactionCurrency === 'KHR') ? formatUSD : formatKHR;
-
-            let cashDetailsHtml = '';
-            if (paymentType === 'Cash') {
-                const receivedPrimary = (transactionCurrency === 'KHR') ? usdToKhr(amountReceived) : amountReceived;
-                const changePrimary = (transactionCurrency === 'KHR') ? usdToKhr(change) : change;
-                
-                cashDetailsHtml = `
-                    <p><strong>${T('amount_received')}:</strong> ${primaryFormatter(receivedPrimary)}</p>
-                    <p><strong>${T('change_due')}:</strong> ${primaryFormatter(changePrimary)}</p>
-                `;
-            }
-
-            const itemRows = order.items.map(item => {
-                const customization = [];
-                if (item.sugar !== 'N/A') customization.push(`${T('sugar')}: ${item.sugar}`);
-                if (item.note) customization.push(`${T('note')}: ${item.note}`);
-
-                const detailLine = customization.length > 0 ? `<div class="text-[8px] italic ml-2 text-gray-600">(${customization.join(', ')})</div>` : '';
-                
-                const itemTotalPrimary = (transactionCurrency === 'KHR') ? usdToKhr(item.price * item.qty) : (item.price * item.qty);
-
-                return `
-                    <div class="flex justify-between border-t border-gray-100 pt-1">
-                        <span class="w-1/2">${item.qty} x ${item.name}</span>
-                        <span class="w-1/4 text-right">${formatUSD(item.price)}</span>
-                        <span class="w-1/4 text-right font-semibold">${primaryFormatter(itemTotalPrimary)}</span>
-                    </div>
-                    ${detailLine}
-                `;
-            }).join('');
-
-            const html = `
-                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('receipt')} (Order ID: ${order.id})</h2>
-                <div class="space-y-3 text-sm">
-                    <p><strong>${T('date')}:</strong> ${receiptDate}</p>
-                    <p><strong>${T('payment')}:</strong> ${paymentType}</p>
-                    ${cashDetailsHtml}
-                    <p class="text-lg font-bold"><strong>${T('total')} ${transactionCurrency}:</strong> ${primaryFormatter(totalPrimary)}</p>
-                    <p class="text-md font-medium text-gray-500"><strong>Total ${transactionCurrency === 'USD' ? 'KHR' : 'USD'}:</strong> ${secondaryFormatter(totalSecondary)}</p>
-                </div>
-                <div class="mt-4 p-3 bg-gray-100 dark:bg-gray-700 rounded-lg">
-                    <h3 class="font-bold border-b pb-1 mb-2">${T('item_details')}</h3>
-                    <div class="space-y-1 text-xs">
-                        ${itemRows}
-                    </div>
-                </div>
-                <div class="mt-4 flex justify-end space-x-3">
-                    <button onclick="closeModal()" class="px-4 py-2 text-sm rounded-lg bg-gray-200 dark:bg-gray-600">${T('close')}</button>
-                    <button onclick="renderReceipt(state.orders.find(o => o.id === '${orderId}')); closeModal();" class="px-4 py-2 text-sm rounded-lg text-white bg-blue-500 hover:bg-blue-600">
-                        Print Receipt
-                    </button>
-                </div>
-            `;
-            showModal(html, 'max-w-lg');
-        };
-
         const renderStaffSalesReportView = () => {
             const selectedDateString = state.salesFilterDate;
             let orders = [];
@@ -1576,130 +1731,20 @@
                             </div>
                         </div>
                     </div>
-
-                    <h3 class="text-xl font-bold mb-4 border-b pb-2 mt-6">${T('detailed_orders')} (${orders.length} orders)</h3>
-                    <div class="bg-card p-4 rounded-xl shadow-lg overflow-x-auto">
-                        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                            <thead class="bg-gray-50 dark:bg-gray-800 sticky top-0">
-                                <tr>
-                                    <th class="p-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-400">ID</th>
-                                    <th class="p-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-400">${T('date')} / Time</th>
-                                    <th class="p-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-400">${T('payment')}</th>
-                                    <th class="p-3 text-right text-sm font-semibold text-gray-600 dark:text-gray-400">${T('change_due')}</th>
-                                    <th class="p-3 text-right text-sm font-semibold text-gray-600 dark:text-gray-400">${T('total')}</th>
-                                    <th class="p-3 text-center text-sm font-semibold text-gray-600 dark:text-gray-400">${T('actions')}</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-                                ${orders.slice().reverse().map(order => `
-                                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
-                                    <td class="p-3 text-xs text-gray-500">${order.id.substring(0, 6)}...</td>
-                                    <td class="p-3 text-sm">${new Date(order.timestamp).toLocaleString()}</td>
-                                    <td class="p-3 text-sm">${order.paymentType}</td>
-                                    <td class="p-3 text-right text-sm">${formatUSD(order.change)}</td>
-                                    <td class="p-3 text-right font-semibold">${formatPrimaryCurrency(order.total)} <span class="text-xs text-gray-500">(${order.transactionCurrency})</span></td>
-                                    <td class="p-3 text-center">
-                                        <button onclick="renderOrderDetailsModal('${order.id}')" class="px-3 py-1 text-xs bg-indigo-500 text-white rounded-lg hover:bg-indigo-600">
-                                            View
-                                        </button>
-                                    </td>
-                                </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    </div>
                 </div>
             `;
-            // Manually sync date input and select after rendering
-            const dateInput = document.getElementById('date-input-sync');
-            const selectFilter = document.getElementById('sales-date-filter');
-            if (state.salesFilterDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                selectFilter.value = formatDateForInput(); // Select 'Today' in dropdown if date selected is today
-                if (state.salesFilterDate !== formatDateForInput()) {
-                    // This is a selected historical date, keep the input value as is, select 'Today' for dropdown if it's the current date
-                }
-            } else if (state.salesFilterDate === 'this_month') {
-                selectFilter.value = 'this_month';
-                dateInput.value = '';
-            } else if (state.salesFilterDate === 'this_year') {
-                selectFilter.value = 'this_year';
-                dateInput.value = '';
-            } else if (state.salesFilterDate === 'all_time') {
-                selectFilter.value = 'all_time';
-                dateInput.value = '';
-            }
         };
 
-
-        // --- SETTINGS MODAL & SELF-SERVICE PASSWORD CHANGE --- 
-
-        // Helper function for self-service password change
-        const changePassword = (newPassword) => {
-            const user = state.users.find(u => u.id === state.currentUser.id);
-            if (user) {
-                user.password = newPassword;
-                saveUsers();
-                closeModal();
-                alert(T('password_change_success'));
+        window.updateSalesFilter = (value) => {
+            if (value.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                state.salesFilterDate = value;
+            } else if (['today', 'this_month', 'this_year', 'all_time'].includes(value)) {
+                state.salesFilterDate = value;
             }
+            renderStaffSalesReportView();
         };
 
-        window.renderChangePasswordModal = () => {
-            // Only allow admin to change their own password
-            if (state.currentUser.role !== 'admin') {
-                alert(T('contact_admin_for_password'));
-                return;
-            }
-
-            const html = `
-                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('change_password_title')}</h2>
-                <form id="change-my-password-form">
-                    <div class="mb-4">
-                        <label for="current_password" class="block text-sm font-medium mb-1">${T('current_password')}</label>
-                        <input type="password" id="current_password" name="current_password" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" required>
-                    </div>
-                    <div class="mb-4">
-                        <label for="new_password_self" class="block text-sm font-medium mb-1">${T('new_password_input')}</label>
-                        <input type="password" id="new_password_self" name="new_password" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" required>
-                    </div>
-                    <div class="mb-4">
-                        <label for="confirm_password_self" class="block text-sm font-medium mb-1">${T('confirm_password_input')}</label>
-                        <input type="password" id="confirm_password_self" name="confirm_password" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" required>
-                    </div>
-                    <p id="password-change-error" class="text-red-500 text-sm mb-4 hidden"></p>
-                    <div class="flex justify-end space-x-3">
-                        <button type="button" onclick="renderSettingsModal()" class="px-4 py-2 text-sm rounded-lg bg-gray-200 dark:bg-gray-600">${T('cancel')}</button>
-                        <button type="submit" class="px-4 py-2 text-sm rounded-lg text-white bg-red-500 hover:bg-red-600">${T('save')}</button>
-                    </div>
-                </form>
-            `;
-            showModal(html);
-
-            document.getElementById('change-my-password-form').onsubmit = (e) => {
-                e.preventDefault();
-                const form = e.target;
-                const currentPass = form.current_password.value;
-                const newPass = form.new_password.value;
-                const confirmPass = form.confirm_password.value;
-                const errorDisplay = document.getElementById('password-change-error');
-                errorDisplay.classList.add('hidden');
-
-                if (newPass !== confirmPass) {
-                    errorDisplay.textContent = T('password_mismatch');
-                    errorDisplay.classList.remove('hidden');
-                    return;
-                }
-                
-                if (currentPass !== state.currentUser.password) {
-                    errorDisplay.textContent = T('current_password_incorrect');
-                    errorDisplay.classList.remove('hidden');
-                    return;
-                }
-
-                changePassword(newPass);
-            };
-        };
-
+        // --- SETTINGS MODAL ---
         window.renderSettingsModal = () => {
             const isDarkMode = state.settings.theme === 'dark';
             const isKhmer = state.settings.language === 'km';
@@ -1813,7 +1858,7 @@
                 
                 state.settings.theme = formData.get('theme');
                 state.settings.language = formData.get('language');
-                state.settings.primaryCurrency = formData.get('primaryCurrency'); // <-- NEW SAVE
+                state.settings.primaryCurrency = formData.get('primaryCurrency');
                 state.settings.fxRate = parseInt(formData.get('fxRate'));
                 state.settings.receiptWidth = formData.get('receiptWidth');
                 state.settings.qrCodeImageUrl = formData.get('qrCodeImageUrl');
@@ -1824,16 +1869,14 @@
             };
         };
 
-
         // --- MAIN APPLICATION ROUTER ---
-
         window.setStateView = (view) => {
             state.currentView = view;
             renderApp();
         }
 
         const renderApp = () => {
-            applyTheme(); // Apply theme on render
+            applyTheme();
 
             if (!state.currentUser) {
                 renderLogin();
@@ -1856,7 +1899,7 @@
                 case 'menu_manager':
                     userRole === 'admin' ? renderMenuManager() : renderStaffDashboard();
                     break;
-                case 'sales_report': // New sales report view for all users
+                case 'sales_report':
                     renderStaffSalesReportView();
                     break;
                 case 'pos':
@@ -1866,9 +1909,61 @@
             }
         };
 
+        const logout = () => {
+            if (state.currentUser) {
+                const activeSession = state.sessions.find(s => s.userId === state.currentUser.id && !s.logoutTime);
+                if (activeSession) {
+                    activeSession.logoutTime = getTimestamp();
+                    saveSessions();
+                }
+            }
+            setCurrentUser(null);
+            state.cart = [];
+            state.currentView = 'pos';
+            renderApp();
+        };
+
         // --- INITIALIZATION ---
-        loadInitialData();
-        renderApp();
+        const initializeApp = async () => {
+            if (state.users.length === 0) {
+                state.users = [
+                    { 
+                        id: 'u1', 
+                        username: 'admin', 
+                        password: SecurityUtils.hashPassword('admin123'), 
+                        role: 'admin', 
+                        name: 'Admin Manager',
+                        twoFactorEnabled: false
+                    },
+                    { 
+                        id: 'u2', 
+                        username: 'staff', 
+                        password: SecurityUtils.hashPassword('staff123'), 
+                        role: 'staff', 
+                        name: 'Staff Member',
+                        twoFactorEnabled: false
+                    }
+                ];
+                saveUsers();
+            }
+
+            if (state.menu.length === 0) {
+                state.menu = INITIAL_MENU;
+                saveMenu();
+            }
+
+            applyTheme();
+            renderApp();
+        };
+
+        // Start the application
+        loadInitialData().then(() => {
+            initializeApp();
+        });
+
+        // Manual sync function
+        window.syncWithGoogleSheets = syncWithGoogleSheets;
+
     </script>
 </body>
 </html>
