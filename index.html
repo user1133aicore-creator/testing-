@@ -207,7 +207,9 @@
                 receipt_logo_url: 'Receipt Logo URL', 
                 detailed_orders: 'Detailed Orders', 
                 active: 'Active', 
-                closed: 'Closed' 
+                closed: 'Closed',
+                password_change_contact_admin: 'Password changes must be requested from an administrator.',
+                contact_admin_for_password: 'Please contact an administrator to change your password.'
             },
             km: {
                 login: 'ចូលប្រើ', username: 'ឈ្មោះអ្នកប្រើប្រាស់', password: 'លេខសម្ងាត់', invalid_credentials: 'ឈ្មោះអ្នកប្រើប្រាស់ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ។',
@@ -250,7 +252,9 @@
                 receipt_logo_url: 'URL រូបភាពស្លាកសញ្ញាវិក័យប័ត្រ', 
                 detailed_orders: 'លំអិតការបញ្ជាទិញ', 
                 active: 'កំពុងប្រើ', 
-                closed: 'បិទ' 
+                closed: 'បិទ',
+                password_change_contact_admin: 'ការផ្លាស់ប្តូរលេខសម្ងាត់ត្រូវតែស្នើសុំពីអ្នកគ្រប់គ្រង។',
+                contact_admin_for_password: 'សូមទាក់ទងអ្នកគ្រប់គ្រងដើម្បីផ្លាស់ប្តូរលេខសម្ងាត់របស់អ្នក។'
             }
         };
         // --- GLOBAL STATE ---
@@ -342,12 +346,41 @@
             if (storedUser) {
                 state.currentUser = state.users.find(u => u.id === storedUser) || null;
             }
+            
+            // Force refresh admin dashboard if admin is logged in and viewing admin pages
+            if (state.currentUser && state.currentUser.role === 'admin' && 
+                ['admin', 'menu_manager', 'sales_report'].includes(state.currentView)) {
+                setTimeout(() => {
+                    renderApp();
+                }, 100);
+            }
         };
 
-        const saveUsers = () => localStorage.setItem(STORAGE_KEY.USERS, JSON.stringify(state.users));
-        const saveMenu = () => localStorage.setItem(STORAGE_KEY.MENU, JSON.stringify(state.menu));
-        const saveOrders = () => localStorage.setItem(STORAGE_KEY.ORDERS, JSON.stringify(state.orders));
-        const saveSessions = () => localStorage.setItem(STORAGE_KEY.SESSIONS, JSON.stringify(state.sessions));
+        // Helper function to refresh data across all tabs/views
+        const triggerDataRefresh = () => {
+            if (state.currentUser && state.currentUser.role === 'admin') {
+                // Reload data to ensure admin sees latest changes
+                loadInitialData();
+                renderApp();
+            }
+        };
+
+        const saveUsers = () => {
+            localStorage.setItem(STORAGE_KEY.USERS, JSON.stringify(state.users));
+            triggerDataRefresh();
+        };
+        const saveMenu = () => {
+            localStorage.setItem(STORAGE_KEY.MENU, JSON.stringify(state.menu));
+            triggerDataRefresh();
+        };
+        const saveOrders = () => {
+            localStorage.setItem(STORAGE_KEY.ORDERS, JSON.stringify(state.orders));
+            triggerDataRefresh();
+        };
+        const saveSessions = () => {
+            localStorage.setItem(STORAGE_KEY.SESSIONS, JSON.stringify(state.sessions));
+            triggerDataRefresh();
+        };
         const saveSettings = () => {
             localStorage.setItem(STORAGE_KEY.SETTINGS, JSON.stringify(state.settings));
             applyTheme();
@@ -833,7 +866,7 @@
 
             const navItems = [
                 { view: 'pos', label: T('pos_dashboard'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-9-4h18"/></svg>` },
-                { view: 'sales_report', label: T('sales_report'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2v5h-5m0 0v-4a2 2 0 012-2h2a2 2 0 012 2v4m-5 4v-2a2 2 0 012-2h2a2 2 0 012 2v2m-6 0h6"/></svg>` },
+                { view: 'sales_report', label: T('sales_report'), icon: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2v5h-5m0 0v-4a2 2 0 012-2h2a2 2 0 012 2v4m-5 4h6"/></svg>` },
             ];
 
             if (user.role === 'admin') {
@@ -1612,6 +1645,12 @@
         };
 
         window.renderChangePasswordModal = () => {
+            // Only allow admin to change their own password
+            if (state.currentUser.role !== 'admin') {
+                alert(T('contact_admin_for_password'));
+                return;
+            }
+
             const html = `
                 <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('change_password_title')}</h2>
                 <form id="change-my-password-form">
@@ -1665,15 +1704,27 @@
             const isDarkMode = state.settings.theme === 'dark';
             const isKhmer = state.settings.language === 'km';
             const is80mm = state.settings.receiptWidth === '80mm';
+            const isAdmin = state.currentUser.role === 'admin';
 
             const html = `
                 <h2 class="text-xl font-bold mb-4 border-b pb-2 text-accent">${T('settings')}</h2>
                 
+                ${isAdmin ? `
                 <div class="mb-6 border-b pb-4 border-gray-200 dark:border-gray-600">
                     <button type="button" onclick="renderChangePasswordModal()" class="w-full p-3 bg-red-500 text-white rounded-lg hover:bg-red-600 transition font-semibold">
                         ${T('change_password_title')}
                     </button>
                 </div>
+                ` : `
+                <div class="mb-6 border-b pb-4 border-gray-200 dark:border-gray-600">
+                    <div class="p-3 bg-yellow-100 dark:bg-yellow-900/50 rounded-lg text-yellow-800 dark:text-yellow-200 text-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline mr-1" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                        </svg>
+                        ${T('password_change_contact_admin')}
+                    </div>
+                </div>
+                `}
 
                 <form id="settings-form" class="space-y-4">
                     <div>
@@ -1747,7 +1798,6 @@
                         <input type="url" id="receiptLogoUrl" name="receiptLogoUrl" value="${state.settings.receiptLogoUrl}" class="w-full p-2 border rounded-lg bg-gray-100 dark:bg-gray-700" placeholder="https://example.com/logo.png">
                     </div>
 
-
                     <div class="flex justify-end space-x-3 pt-4">
                         <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm rounded-lg bg-gray-200 dark:bg-gray-600">${T('cancel')}</button>
                         <button type="submit" class="px-4 py-2 text-sm rounded-lg text-white bg-accent hover:bg-amber-600">${T('save')}</button>
@@ -1767,7 +1817,7 @@
                 state.settings.fxRate = parseInt(formData.get('fxRate'));
                 state.settings.receiptWidth = formData.get('receiptWidth');
                 state.settings.qrCodeImageUrl = formData.get('qrCodeImageUrl');
-                state.settings.receiptLogoUrl = formData.get('receiptLogoUrl'); 
+                state.settings.receiptLogoUrl = formData.get('receiptLogoUrl');
 
                 saveSettings();
                 closeModal();
